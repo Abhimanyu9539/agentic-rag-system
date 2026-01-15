@@ -10,5 +10,12 @@ wheels/
 .venv
 .env
 
+# Logs and temporary files
+logs/
+temp/
+*.log
+*.tmp
+
 # Data
 data/processed/
+data/output/

@@ -1,9 +1,10 @@
 import io
 import json
 import os
+from collections import defaultdict
 
 import fitz  # PyMuPDF
-from langchain_opendataloader_pdf import OpenDataLoaderPDFLoader
+import opendataloader_pdf
 from PIL import Image
 
 
@@ -25,33 +26,67 @@ def _pix_to_pil(pix):
 
 
 # ---------------------------------------------------------------------------
-# OpenDataLoader JSON loader
+# PDF parsing — both formats in a single JVM call
 # ---------------------------------------------------------------------------
 
-def load_opendataloader_json(pdf_path):
-    """Return a list of page-level dicts from OpenDataLoader."""
-    loader = OpenDataLoaderPDFLoader(file_path=[pdf_path], format="json")
-    documents = loader.load()
+# Same separator the LangChain wrapper uses; Java substitutes the actual page number.
+_MD_PAGE_SEPARATOR = "\n<<<ODL_PAGE_BREAK_%page-number%>>>\n"
 
-    if not documents:
-        raise RuntimeError(f"OpenDataLoader returned no documents for: {pdf_path}")
 
-    print(f"📄 OpenDataLoader returned {len(documents)} document(s)")
+def parse_pdf(pdf_path: str, parsed_dir: str) -> tuple[str, str]:
+    """
+    Convert a PDF to both JSON and markdown using a single JVM call.
 
-    pages = []
-    for i, doc in enumerate(documents):
-        content = doc.page_content
-        if not content:
-            continue
-        if isinstance(content, str):
-            try:
-                content = json.loads(content)
-            except json.JSONDecodeError as e:
-                print(f"  ⚠️  Document {i} is not valid JSON: {e}")
-                continue
-        pages.append(content)
+    Outputs are written to *parsed_dir/{stem}/* so you can inspect them.
+    Returns (json_path, md_path).
+    """
+    stem    = os.path.splitext(os.path.basename(pdf_path))[0]
+    out_dir = os.path.join(parsed_dir, stem)
+    os.makedirs(out_dir, exist_ok=True)
 
-    print(f"✅ Parsed {len(pages)} page(s)")
+    opendataloader_pdf.convert(
+        input_path=pdf_path,
+        output_dir=out_dir,
+        format=["json", "markdown"],
+        markdown_page_separator=_MD_PAGE_SEPARATOR,
+        quiet=True,
+    )
+
+    json_path = os.path.join(out_dir, stem + ".json")
+    md_path   = os.path.join(out_dir, stem + ".md")
+
+    if not os.path.exists(json_path):
+        raise RuntimeError(f"Expected JSON output not found: {json_path}")
+    if not os.path.exists(md_path):
+        raise RuntimeError(f"Expected markdown output not found: {md_path}")
+
+    print(f"✅ Parsed: {stem}.json + {stem}.md  →  {out_dir}")
+    return json_path, md_path
+
+
+def load_json_from_file(json_path: str) -> list:
+    """
+    Read the JSON file produced by parse_pdf and return a list of per-page dicts
+    [{"page number": N, "kids": [...]}, ...] — the same structure the
+    traverse / table-extraction logic expects.
+
+    The raw JSON file has a flat {"kids": [all_elements]} structure where each
+    element carries its own "page number" field.  We group by page here so the
+    rest of the pipeline is unchanged.
+    """
+    with open(json_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    pages_map: dict = defaultdict(list)
+    for element in data.get("kids", []):
+        pages_map[element.get("page number", 1)].append(element)
+
+    pages = [
+        {"page number": pnum, "kids": kids}
+        for pnum, kids in sorted(pages_map.items())
+    ]
+
+    print(f"✅ Loaded {len(pages)} page(s) from JSON")
     return pages
 
 
@@ -111,10 +146,15 @@ def _merge_images(parts):
 # Main extraction
 # ---------------------------------------------------------------------------
 
-def extract_tables_as_images(pdf_path, output_dir, metadata_path=None):
+def extract_tables_as_images(
+    pdf_path: str,
+    output_dir: str,
+    parsed_dir: str,
+    metadata_path: str | None = None,
+) -> tuple[list, str]:
     """
-    Extract all tables from a PDF, merging parts that span multiple pages,
-    and save each logical table as a single PNG image.
+    Parse the PDF (JSON + markdown in one JVM call), extract all tables as PNG
+    images, and return (table_metadata, md_path).
 
     Context strategy
     ----------------
@@ -141,9 +181,11 @@ def extract_tables_as_images(pdf_path, output_dir, metadata_path=None):
         if f.startswith("table_") and f.endswith(".png"):
             os.remove(os.path.join(output_dir, f))
 
-    data = load_opendataloader_json(pdf_path)
+    # Single JVM call → JSON (table detection) + markdown (chunking)
+    json_path, md_path = parse_pdf(pdf_path, parsed_dir)
+    data = load_json_from_file(json_path)
 
-    table_count   = 0
+    table_count    = 0
     table_metadata = []
 
     fitz_doc = fitz.open(pdf_path)
@@ -182,10 +224,10 @@ def extract_tables_as_images(pdf_path, output_dir, metadata_path=None):
                 "image_path": active["image_path"],
             })
 
-            active["parts"]     = []
-            active["all_pages"] = []
-            active["image_path"] = None
-            active["first_page"] = None
+            active["parts"]       = []
+            active["all_pages"]   = []
+            active["image_path"]  = None
+            active["first_page"]  = None
             active["table_count"] = None
 
         def _process_table(node):
@@ -250,8 +292,6 @@ def extract_tables_as_images(pdf_path, output_dir, metadata_path=None):
                 node_type = node.get("type", "").lower()
 
                 if node_type == "heading":
-                    # Track the most-recently-seen heading's page so continuation
-                    # detection can check whether the current table has its own heading.
                     state["heading_page"] = node.get("page number")
 
                 if node_type == "table":
@@ -278,7 +318,70 @@ def extract_tables_as_images(pdf_path, output_dir, metadata_path=None):
         print(f"📦 Metadata saved to {metadata_path}")
 
     print(f"\n🎯 Total logical tables saved: {table_count}")
-    return table_metadata
+    return table_metadata, md_path
+
+
+# ---------------------------------------------------------------------------
+# Folder-level extraction
+# ---------------------------------------------------------------------------
+
+def extract_tables_from_folder(
+    folder_path: str,
+    output_dir: str,
+    parsed_dir: str,
+    metadata_path: str | None = None,
+) -> list:
+    """
+    Process every PDF in *folder_path* and extract tables from each.
+
+    Each PDF gets:
+    - Its own sub-directory in *output_dir* for table PNG images
+    - Its own sub-directory in *parsed_dir* for the .json and .md parse outputs
+
+    All per-file metadata is merged into a single list; each entry gains a
+    ``source_pdf`` key with the file name.
+
+    Returns the combined metadata list.
+    """
+    pdf_files = sorted(
+        os.path.join(folder_path, f)
+        for f in os.listdir(folder_path)
+        if f.lower().endswith(".pdf")
+    )
+
+    if not pdf_files:
+        print(f"⚠️  No PDF files found in: {folder_path}")
+        return []
+
+    print(f"📂 Found {len(pdf_files)} PDF(s) in {folder_path}\n")
+
+    combined_metadata = []
+
+    for pdf_path in pdf_files:
+        stem       = os.path.splitext(os.path.basename(pdf_path))[0]
+        pdf_outdir = os.path.join(output_dir, stem)
+
+        print(f"{'─' * 60}")
+        print(f"📄 Processing: {os.path.basename(pdf_path)}")
+
+        per_file_meta, _ = extract_tables_as_images(pdf_path, pdf_outdir, parsed_dir)
+
+        for entry in per_file_meta:
+            entry["source_pdf"] = os.path.basename(pdf_path)
+
+        combined_metadata.extend(per_file_meta)
+        print()
+
+    print(f"{'=' * 60}")
+    print(f"🎯 Grand total logical tables: {len(combined_metadata)}")
+
+    if metadata_path:
+        os.makedirs(os.path.dirname(metadata_path) or ".", exist_ok=True)
+        with open(metadata_path, "w", encoding="utf-8") as f:
+            json.dump(combined_metadata, f, indent=2)
+        print(f"📦 Combined metadata saved to {metadata_path}")
+
+    return combined_metadata
 
 
 # ---------------------------------------------------------------------------
@@ -286,8 +389,9 @@ def extract_tables_as_images(pdf_path, output_dir, metadata_path=None):
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    pdf_path      = r"E:\LLMOps\agentic-rag-system\data\raw\Employees' Pension Scheme, 1995.pdf"
-    output_dir    = r"E:\LLMOps\agentic-rag-system\data\processed\tables"
+    folder_path   = r"E:\LLMOps\agentic-rag-system\data\raw"
+    output_dir    = r"E:\LLMOps\agentic-rag-system\data\output\tables"
+    parsed_dir    = r"E:\LLMOps\agentic-rag-system\data\output\parsed"
     metadata_path = os.path.join(output_dir, "table_metadata.json")
 
-    extract_tables_as_images(pdf_path, output_dir, metadata_path=metadata_path)
+    extract_tables_from_folder(folder_path, output_dir, parsed_dir, metadata_path=metadata_path)
