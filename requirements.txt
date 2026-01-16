@@ -9,3 +9,4 @@ opendataloader-pdf
 PyMuPDF
 pillow
 PyMupdf
+dotenv

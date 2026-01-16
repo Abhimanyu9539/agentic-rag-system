@@ -8,3 +8,7 @@ ODL_PAGE_PATTERN = re.compile(r"<<<ODL_PAGE_BREAK_(\d+)>>>")
 
 # Working sentinel used during chunk splitting; stripped before final output.
 SENTINEL_RE = re.compile(r"<!-- page:(\d+) -->")
+
+# ---------------------------------------------------------------------------
+# Vector DB Batch Size (Pinecone recommends <=100 vectors per upsert)
+_BATCH_SIZE = 100

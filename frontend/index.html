@@ -1,0 +1,1502 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AgenticRAG — Document Intelligence</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* ── Design tokens ── */
+    :root {
+      --bg:          #0f0f11;
+      --surface:     #1a1a1f;
+      --surface-hover: #22222a;
+      --border:      #2a2a32;
+      --accent:      #6366f1;
+      --accent-light:#818cf8;
+      --accent-dim:  rgba(99,102,241,0.12);
+      --text-primary:#f0f0f4;
+      --text-secondary:#8b8b9e;
+      --text-muted:  #4a4a5a;
+      --success:     #34d399;
+      --warning:     #fbbf24;
+      --shadow:      0 1px 3px rgba(0,0,0,0.4);
+      --shadow-md:   0 4px 12px rgba(0,0,0,0.35);
+      --radius:      10px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text-primary);
+      overflow: hidden;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── Layout shell ── */
+    #app {
+      display: grid;
+      grid-template-rows: 52px 1fr;
+      grid-template-columns: 256px 1fr 272px;
+      grid-template-areas:
+        "header header header"
+        "sidebar-left  main  sidebar-right";
+      height: 100vh;
+    }
+
+    /* ── Header ── */
+    header {
+      grid-area: header;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 20px;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      position: relative;
+      z-index: 10;
+    }
+
+    .logo-wrap {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .logo-icon {
+      width: 30px;
+      height: 30px;
+      border-radius: 8px;
+      background: var(--accent);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .logo-text {
+      font-size: 0.95rem;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      color: var(--text-primary);
+    }
+
+    .nav-pill {
+      font-size: 0.65rem;
+      font-weight: 500;
+      letter-spacing: 0.04em;
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 2px 8px;
+    }
+
+    .header-meta {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      font-size: 0.72rem;
+      color: var(--text-secondary);
+    }
+
+    .header-meta-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--success);
+      flex-shrink: 0;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .btn-ghost {
+      font-size: 0.72rem;
+      font-weight: 500;
+      color: var(--text-secondary);
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 4px 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+
+    .btn-ghost:hover {
+      background: var(--surface-hover);
+      color: var(--text-primary);
+    }
+
+    .avatar-btn {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: var(--accent-dim);
+      border: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: var(--accent-light);
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+
+    /* ── Shared sidebar base ── */
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      background: var(--surface);
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
+
+    .sidebar::-webkit-scrollbar { width: 3px; }
+    .sidebar::-webkit-scrollbar-track { background: transparent; }
+    .sidebar::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 2px;
+    }
+
+    /* ── Left Sidebar ── */
+    #sidebar-left {
+      grid-area: sidebar-left;
+      border-right: 1px solid var(--border);
+    }
+
+    /* ── Section heading ── */
+    .section-heading {
+      font-size: 0.65rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      padding: 14px 16px 10px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .section-heading-count {
+      margin-left: auto;
+      background: var(--accent-dim);
+      color: var(--accent-light);
+      font-size: 0.6rem;
+      font-weight: 600;
+      padding: 1px 6px;
+      border-radius: 20px;
+      letter-spacing: 0;
+    }
+
+    /* ── Doc card ── */
+    .doc-card {
+      margin: 8px 10px;
+      padding: 11px 13px;
+      border-radius: var(--radius);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      cursor: pointer;
+      transition: background 0.15s ease;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .doc-card::before {
+      content: '';
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 2px;
+      background: var(--accent);
+      border-radius: 0 2px 2px 0;
+      opacity: 0;
+      transition: opacity 0.15s ease;
+    }
+
+    .doc-card.processing::before {
+      background: var(--warning);
+      opacity: 1;
+    }
+
+    .doc-card:hover {
+      background: var(--surface-hover);
+    }
+
+    .doc-card:hover::before {
+      opacity: 1;
+    }
+
+    .doc-card.selected {
+      background: var(--surface-hover);
+      border-color: rgba(99,102,241,0.3);
+    }
+
+    .doc-card.selected::before { opacity: 1; }
+
+    .doc-filename {
+      font-size: 0.775rem;
+      font-weight: 500;
+      color: var(--text-primary);
+      line-height: 1.35;
+      margin-bottom: 7px;
+    }
+
+    .doc-meta {
+      font-size: 0.68rem;
+      color: var(--text-muted);
+      display: flex;
+      gap: 7px;
+      align-items: center;
+      margin-bottom: 9px;
+    }
+
+    .badge {
+      font-size: 0.6rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      padding: 2px 7px;
+      border-radius: 20px;
+    }
+
+    .badge-indexed {
+      background: rgba(52,211,153,0.1);
+      color: var(--success);
+      border: 1px solid rgba(52,211,153,0.2);
+    }
+
+    .badge-processing {
+      background: rgba(251,191,36,0.1);
+      color: var(--warning);
+      border: 1px solid rgba(251,191,36,0.2);
+    }
+
+    .doc-stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 5px;
+    }
+
+    .stat-pill {
+      font-size: 0.64rem;
+      color: var(--text-muted);
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 8px;
+    }
+
+    .stat-pill span {
+      display: block;
+      font-weight: 600;
+      color: var(--text-secondary);
+      font-size: 0.7rem;
+      margin-top: 1px;
+    }
+
+    /* ── Progress bar ── */
+    .bar-track {
+      height: 2px;
+      background: rgba(255,255,255,0.06);
+      border-radius: 2px;
+      margin-bottom: 7px;
+      overflow: hidden;
+    }
+
+    .bar-fill {
+      height: 100%;
+      border-radius: 2px;
+      background: var(--accent);
+    }
+
+    .bar-fill.success { background: var(--success); }
+
+    /* ── System info footer ── */
+    .sys-stats {
+      margin-top: auto;
+      padding: 13px 14px;
+      border-top: 1px solid var(--border);
+      font-size: 0.67rem;
+      color: var(--text-muted);
+    }
+
+    .sys-label {
+      margin-bottom: 3px;
+      display: flex;
+      justify-content: space-between;
+      color: var(--text-muted);
+    }
+
+    .sys-label span { color: var(--text-secondary); }
+
+    .sys-footer-note {
+      margin-top: 8px;
+      font-size: 0.61rem;
+      color: var(--text-muted);
+      text-align: center;
+    }
+
+    /* ── Main Chat ── */
+    #main {
+      grid-area: main;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      background: var(--bg);
+    }
+
+    #chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px 28px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 22px;
+      scroll-behavior: smooth;
+    }
+
+    #chat-messages::-webkit-scrollbar { width: 3px; }
+    #chat-messages::-webkit-scrollbar-track { background: transparent; }
+    #chat-messages::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 2px;
+    }
+
+    /* ── Message row ── */
+    .msg-row {
+      display: flex;
+      gap: 11px;
+      align-items: flex-start;
+      animation: fadeIn 0.2s ease both;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to   { opacity: 1; }
+    }
+
+    .msg-row.user { flex-direction: row-reverse; }
+
+    .avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.7rem;
+      font-weight: 600;
+    }
+
+    .avatar-ai {
+      background: var(--accent-dim);
+      border: 1px solid rgba(99,102,241,0.25);
+      color: var(--accent-light);
+    }
+
+    .avatar-user {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+    }
+
+    .bubble {
+      max-width: 72%;
+      padding: 13px 16px;
+      border-radius: 12px;
+      font-size: 0.855rem;
+      line-height: 1.7;
+      box-shadow: var(--shadow);
+    }
+
+    .bubble-ai {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-top-left-radius: 3px;
+    }
+
+    .bubble-user {
+      background: #1e1e2e;
+      border: 1px solid rgba(99,102,241,0.2);
+      border-top-right-radius: 3px;
+      color: #d4d4f0;
+    }
+
+    .bubble-time {
+      font-size: 0.62rem;
+      color: var(--text-muted);
+      margin-top: 5px;
+    }
+
+    .msg-row.user .bubble-time { text-align: right; }
+
+    /* ── Sources collapsible ── */
+    .sources-toggle {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      margin-top: 12px;
+      padding: 6px 10px;
+      border-radius: 7px;
+      background: var(--accent-dim);
+      border: 1px solid rgba(99,102,241,0.2);
+      font-size: 0.73rem;
+      font-weight: 500;
+      color: var(--accent-light);
+      user-select: none;
+      transition: background 0.15s ease;
+    }
+
+    .sources-toggle:hover { background: rgba(99,102,241,0.18); }
+
+    .sources-toggle .chevron {
+      margin-left: auto;
+      transition: transform 0.2s ease;
+      opacity: 0.7;
+    }
+
+    .sources-toggle.open .chevron { transform: rotate(180deg); }
+
+    .sources-body {
+      margin-top: 7px;
+      padding: 8px;
+      border-radius: 9px;
+      background: rgba(0,0,0,0.15);
+      border: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .sources-body.collapsed { display: none; }
+
+    .source-item {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 7px 9px;
+      border-radius: 7px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      font-size: 0.74rem;
+      transition: background 0.15s ease;
+    }
+
+    .source-item:hover { background: var(--surface-hover); }
+
+    .source-icon {
+      width: 26px;
+      height: 26px;
+      background: var(--accent-dim);
+      border: 1px solid rgba(99,102,241,0.2);
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      color: var(--accent-light);
+    }
+
+    .source-info { flex: 1; min-width: 0; }
+
+    .source-filename {
+      font-weight: 500;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .source-meta {
+      color: var(--text-muted);
+      font-size: 0.67rem;
+      margin-top: 1px;
+    }
+
+    .source-score {
+      font-size: 0.67rem;
+      font-weight: 600;
+      color: var(--accent-light);
+      background: var(--accent-dim);
+      padding: 2px 7px;
+      border-radius: 20px;
+      flex-shrink: 0;
+    }
+
+    /* ── Tables section ── */
+    .tables-section {
+      margin-top: 10px;
+      padding: 10px;
+      border-radius: 9px;
+      background: rgba(0,0,0,0.12);
+      border: 1px solid var(--border);
+    }
+
+    .tables-label {
+      font-size: 0.67rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--text-secondary);
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .table-thumbs {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .table-thumb {
+      width: 86px;
+      height: 60px;
+      border-radius: 7px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 4px;
+      color: var(--text-muted);
+      font-size: 0.61rem;
+      cursor: pointer;
+      transition: background 0.15s ease, border-color 0.15s ease;
+    }
+
+    .table-thumb:hover {
+      background: var(--surface-hover);
+      border-color: rgba(99,102,241,0.3);
+    }
+
+    /* ── Input area ── */
+    #input-area {
+      padding: 14px 28px 18px;
+      border-top: 1px solid var(--border);
+      background: var(--bg);
+    }
+
+    .input-wrap {
+      display: flex;
+      gap: 10px;
+      align-items: flex-end;
+    }
+
+    #question-input {
+      flex: 1;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 11px 15px;
+      color: var(--text-primary);
+      font-size: 0.855rem;
+      line-height: 1.5;
+      resize: none;
+      outline: none;
+      min-height: 44px;
+      max-height: 140px;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+      font-family: inherit;
+    }
+
+    #question-input::placeholder { color: var(--text-muted); }
+
+    #question-input:focus {
+      border-color: rgba(99,102,241,0.5);
+      box-shadow: 0 0 0 3px rgba(99,102,241,0.08);
+    }
+
+    #ask-btn {
+      height: 44px;
+      padding: 0 20px;
+      border-radius: 9px;
+      background: var(--accent);
+      border: none;
+      color: #fff;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s ease;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      white-space: nowrap;
+      letter-spacing: 0.01em;
+    }
+
+    #ask-btn:hover  { background: #5254cc; }
+    #ask-btn:active { background: #4749b8; }
+
+    /* ── Typing indicator ── */
+    .typing-indicator {
+      font-size: 0.68rem;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin-top: 7px;
+      opacity: 0;
+      transition: opacity 0.2s ease;
+    }
+
+    .typing-indicator.visible { opacity: 1; }
+
+    .typing-dots { display: flex; gap: 3px; align-items: center; }
+
+    .typing-dots span {
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      animation: typingFade 1.2s ease-in-out infinite;
+    }
+
+    .typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+    .typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+    @keyframes typingFade {
+      0%, 80%, 100% { opacity: 0.25; }
+      40%            { opacity: 1; }
+    }
+
+    /* ── Right sidebar ── */
+    #sidebar-right {
+      grid-area: sidebar-right;
+      border-left: 1px solid var(--border);
+    }
+
+    /* ── Chunk card ── */
+    .chunk-card {
+      margin: 7px 10px;
+      padding: 11px 12px;
+      border-radius: var(--radius);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      font-size: 0.74rem;
+      cursor: pointer;
+      transition: background 0.15s ease;
+      animation: fadeIn 0.2s ease both;
+    }
+
+    .chunk-card:hover {
+      background: var(--surface-hover);
+    }
+
+    .chunk-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 6px;
+      gap: 6px;
+    }
+
+    .chunk-source {
+      font-size: 0.65rem;
+      font-weight: 600;
+      color: var(--accent-light);
+      line-height: 1.35;
+    }
+
+    .chunk-rank {
+      font-size: 0.6rem;
+      font-weight: 600;
+      background: var(--accent-dim);
+      color: var(--accent-light);
+      border: 1px solid rgba(99,102,241,0.2);
+      border-radius: 20px;
+      padding: 1px 6px;
+      flex-shrink: 0;
+    }
+
+    .chunk-text {
+      color: var(--text-muted);
+      font-size: 0.71rem;
+      line-height: 1.55;
+      margin-bottom: 9px;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .relevance-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .relevance-label {
+      font-size: 0.61rem;
+      color: var(--text-muted);
+      flex-shrink: 0;
+    }
+
+    .relevance-bar {
+      flex: 1;
+      height: 3px;
+      background: rgba(255,255,255,0.05);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .relevance-fill {
+      height: 100%;
+      border-radius: 2px;
+      background: var(--accent);
+      transition: width 0.4s ease-out;
+    }
+
+    .relevance-score {
+      font-size: 0.66rem;
+      font-weight: 600;
+      color: var(--accent-light);
+      flex-shrink: 0;
+      min-width: 28px;
+      text-align: right;
+    }
+
+    /* ── Highlight mark ── */
+    mark {
+      background: rgba(99,102,241,0.15);
+      color: var(--accent-light);
+      border-radius: 3px;
+      padding: 0 2px;
+    }
+
+    /* ── Chat History sidebar ── */
+    .chat-history-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 16px 10px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .chat-history-title {
+      font-size: 0.65rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .new-chat-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 22px;
+      height: 22px;
+      border-radius: 6px;
+      background: var(--accent-dim);
+      border: 1px solid rgba(99,102,241,0.25);
+      color: var(--accent-light);
+      cursor: pointer;
+      transition: background 0.15s ease;
+      flex-shrink: 0;
+    }
+
+    .new-chat-btn:hover {
+      background: rgba(99,102,241,0.22);
+    }
+
+    .history-group-label {
+      font-size: 0.61rem;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      padding: 12px 16px 5px;
+    }
+
+    .history-item {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 8px 14px 8px 12px;
+      cursor: pointer;
+      transition: background 0.15s ease;
+      border-left: 2px solid transparent;
+      position: relative;
+    }
+
+    .history-item:hover {
+      background: var(--surface-hover);
+    }
+
+    .history-item.active {
+      background: #1e1e27;
+      border-left-color: var(--accent);
+    }
+
+    .history-item-text {
+      flex: 1;
+      min-width: 0;
+      font-size: 0.775rem;
+      color: var(--text-secondary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      line-height: 1.35;
+    }
+
+    .history-item.active .history-item-text {
+      color: var(--text-primary);
+    }
+
+    .history-item-time {
+      font-size: 0.62rem;
+      color: var(--text-muted);
+      flex-shrink: 0;
+    }
+  </style>
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ══════════════════ HEADER ══════════════════ -->
+  <header>
+    <div class="logo-wrap">
+      <!-- Simple geometric SVG logo mark -->
+      <div class="logo-icon">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <path d="M8 2L14 5.5V10.5L8 14L2 10.5V5.5L8 2Z" stroke="white" stroke-width="1.4" stroke-linejoin="round"/>
+          <path d="M8 6L10.5 7.5V10.5L8 12L5.5 10.5V7.5L8 6Z" fill="white" opacity="0.6"/>
+        </svg>
+      </div>
+      <span class="logo-text">AgenticRAG</span>
+      <span class="nav-pill">v2.1</span>
+    </div>
+
+    <div class="header-meta">
+      <div class="header-meta-item">
+        <div class="status-dot"></div>
+        <span>Online</span>
+      </div>
+      <span style="color:var(--border);">|</span>
+      <div class="header-meta-item">
+        Model: <span style="color:var(--text-primary);font-weight:500;">GPT-4o</span>
+      </div>
+      <div class="header-meta-item">
+        Embed: <span style="color:var(--text-primary);font-weight:500;">text-3-small</span>
+      </div>
+      <div class="header-meta-item">
+        Chunks: <span style="color:var(--text-secondary);">1,842</span>
+      </div>
+    </div>
+
+    <div class="header-actions">
+      <button class="btn-ghost" onclick="toggleRightSidebar()">
+        Chunks
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+          <path d="M4 2.5L6.5 5L4 7.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+      <div class="avatar-btn">A</div>
+    </div>
+  </header>
+
+  <!-- ══════════════════ LEFT SIDEBAR ══════════════════ -->
+  <aside id="sidebar-left" class="sidebar">
+
+    <!-- Header -->
+    <div class="chat-history-header">
+      <div class="chat-history-title">
+        <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
+          <path d="M1.5 2.5h8v6.5a.5.5 0 01-.5.5H2a.5.5 0 01-.5-.5V2.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+          <path d="M3.5 8.5v1.5l2-1.5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M1.5 2.5l4-1.5 4 1.5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        Chat History
+      </div>
+      <button class="new-chat-btn" title="New Chat" onclick="newChat()">
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+          <path d="M5 2v6M2 5h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Today group -->
+    <div class="history-group-label">Today</div>
+
+    <div class="history-item active" onclick="selectChat(this)">
+      <div class="history-item-text">Show me contribution rate tables for EPF…</div>
+      <div class="history-item-time">2h ago</div>
+    </div>
+
+    <div class="history-item" onclick="selectChat(this)">
+      <div class="history-item-text">What are the withdrawal conditions unde…</div>
+      <div class="history-item-time">4h ago</div>
+    </div>
+
+    <div class="history-item" onclick="selectChat(this)">
+      <div class="history-item-text">Explain the employer obligations in EPS…</div>
+      <div class="history-item-time">6h ago</div>
+    </div>
+
+    <!-- Yesterday group -->
+    <div class="history-group-label">Yesterday</div>
+
+    <div class="history-item" onclick="selectChat(this)">
+      <div class="history-item-text">Pension calculation formula for service…</div>
+      <div class="history-item-time">1d ago</div>
+    </div>
+
+    <div class="history-item" onclick="selectChat(this)">
+      <div class="history-item-text">What is the wage ceiling for EPF contri…</div>
+      <div class="history-item-time">1d ago</div>
+    </div>
+
+  </aside>
+
+  <!-- ══════════════════ MAIN CHAT ══════════════════ -->
+  <main id="main">
+
+    <div id="chat-messages">
+
+      <!-- ── Message 1: User ── -->
+      <div class="msg-row user">
+        <div class="avatar avatar-user">A</div>
+        <div>
+          <div class="bubble bubble-user">
+            What is the minimum pension amount guaranteed under the Employees' Pension Scheme 1995, and who is eligible to receive it?
+          </div>
+          <div class="bubble-time">Today, 14:32</div>
+        </div>
+      </div>
+
+      <!-- ── Message 1: AI ── -->
+      <div class="msg-row">
+        <div class="avatar avatar-ai">
+          <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+            <path d="M6.5 1.5L11.5 4.25V8.75L6.5 11.5L1.5 8.75V4.25L6.5 1.5Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+            <path d="M6.5 5L8.5 6.25V8.5L6.5 9.75L4.5 8.5V6.25L6.5 5Z" fill="currentColor" opacity="0.5"/>
+          </svg>
+        </div>
+        <div style="max-width:72%;">
+          <div class="bubble bubble-ai">
+            <p>Under the <mark>Employees' Pension Scheme (EPS) 1995</mark>, the Government of India guarantees a <mark>minimum monthly pension of ₹1,000</mark> per month to eligible members.</p>
+            <br/>
+            <p style="font-weight:600;color:var(--text-secondary);font-size:0.82rem;">Eligibility criteria</p>
+            <ul style="margin-top:7px;margin-left:16px;display:flex;flex-direction:column;gap:5px;color:var(--text-secondary);">
+              <li>The member must have completed <strong style="color:var(--text-primary);">10 years of contributory service</strong>.</li>
+              <li>The member must have attained the age of <strong style="color:var(--text-primary);">58 years</strong> (superannuation) or <strong style="color:var(--text-primary);">50 years</strong> (early pension, reduced rate).</li>
+              <li>Pension is payable on <strong style="color:var(--text-primary);">permanent and total disablement</strong> regardless of service period.</li>
+              <li>Nominee/family members are eligible for <strong style="color:var(--text-primary);">widow, children, and orphan pension</strong> upon the member's death.</li>
+            </ul>
+            <br/>
+            <p style="color:var(--text-muted);font-size:0.82rem;">The ₹1,000 minimum was introduced via the <em>EPS Amendment 2014</em> and is funded partly by the Central Government contribution of <mark>1.16%</mark> of wages.</p>
+
+            <!-- Sources collapsible -->
+            <div class="sources-toggle open" onclick="toggleSources(this)">
+              <svg width="13" height="13" viewBox="0 0 13 13" fill="none" style="flex-shrink:0">
+                <path d="M2 3h9M2 6.5h6M2 10h4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+              </svg>
+              3 sources retrieved
+              <svg class="chevron" width="11" height="11" viewBox="0 0 11 11" fill="none">
+                <path d="M2.5 4L5.5 7L8.5 4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </div>
+            <div class="sources-body">
+              <div class="source-item">
+                <div class="source-icon">
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                    <path d="M2 1h8v10H2z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+                    <path d="M4 4h4M4 6.5h4M4 9h2" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+                  </svg>
+                </div>
+                <div class="source-info">
+                  <div class="source-filename">Employees Pension Scheme 1995.pdf</div>
+                  <div class="source-meta">Pages 12–14 · Section 12: Quantum of Pension</div>
+                </div>
+                <div class="source-score">0.94</div>
+              </div>
+              <div class="source-item">
+                <div class="source-icon">
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                    <path d="M2 1h8v10H2z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+                    <path d="M4 4h4M4 6.5h4M4 9h2" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+                  </svg>
+                </div>
+                <div class="source-info">
+                  <div class="source-filename">Employees Pension Scheme 1995.pdf</div>
+                  <div class="source-meta">Pages 6–8 · Section 6: Eligibility for Membership</div>
+                </div>
+                <div class="source-score">0.89</div>
+              </div>
+              <div class="source-item">
+                <div class="source-icon">
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                    <path d="M2 1h8v10H2z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+                    <path d="M4 4h4M4 6.5h4M4 9h2" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+                  </svg>
+                </div>
+                <div class="source-info">
+                  <div class="source-filename">EPF Amendment Act 2023.pdf</div>
+                  <div class="source-meta">Page 3 · Clause 4: Minimum Pension Revision</div>
+                </div>
+                <div class="source-score">0.81</div>
+              </div>
+            </div>
+          </div>
+          <div class="bubble-time">Today, 14:32 · 1.2s · 4 chunks</div>
+        </div>
+      </div>
+
+      <!-- ── Message 2: User ── -->
+      <div class="msg-row user">
+        <div class="avatar avatar-user">A</div>
+        <div>
+          <div class="bubble bubble-user">
+            Show me the contribution rate tables for EPF 1952 — both employee and employer shares.
+          </div>
+          <div class="bubble-time">Today, 14:35</div>
+        </div>
+      </div>
+
+      <!-- ── Message 2: AI ── -->
+      <div class="msg-row">
+        <div class="avatar avatar-ai">
+          <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+            <path d="M6.5 1.5L11.5 4.25V8.75L6.5 11.5L1.5 8.75V4.25L6.5 1.5Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+            <path d="M6.5 5L8.5 6.25V8.5L6.5 9.75L4.5 8.5V6.25L6.5 5Z" fill="currentColor" opacity="0.5"/>
+          </svg>
+        </div>
+        <div style="max-width:72%;">
+          <div class="bubble bubble-ai">
+            <p>Under the <mark>Employees' Provident Funds Scheme 1952</mark>, contributions are split between the employee and employer as follows:</p>
+            <br/>
+            <p style="font-weight:600;color:var(--text-secondary);font-size:0.82rem;">Standard Establishment (20+ employees)</p>
+            <ul style="margin:7px 0 7px 16px;display:flex;flex-direction:column;gap:5px;color:var(--text-secondary);">
+              <li><strong style="color:var(--text-primary);">Employee:</strong> 12% of basic wages + dearness allowance + retaining allowance</li>
+              <li><strong style="color:var(--text-primary);">Employer:</strong> 12% split as <mark>3.67%</mark> to EPF + <mark>8.33%</mark> to EPS (capped at ₹15,000 wage ceiling)</li>
+              <li><strong style="color:var(--text-primary);">Employer admin charges:</strong> 0.50% to EPF admin + 0.50% to EDLI</li>
+            </ul>
+            <p style="color:var(--text-muted);font-size:0.82rem;">I found 2 relevant contribution tables extracted from the document.</p>
+
+            <!-- Tables section -->
+            <div class="tables-section">
+              <div class="tables-label">
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                  <rect x="1" y="1" width="10" height="10" rx="2" stroke="currentColor" stroke-width="1.1"/>
+                  <path d="M1 4h10M1 7.5h10M4.5 4v6.5" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+                </svg>
+                Extracted Tables (2)
+              </div>
+              <div class="table-thumbs">
+                <div class="table-thumb" title="Table 1 — EPF Contribution Rates (p.18)">
+                  <svg width="26" height="20" viewBox="0 0 26 20" fill="none">
+                    <rect x="1" y="1" width="24" height="18" rx="2" stroke="currentColor" stroke-width="1"/>
+                    <path d="M1 5.5h24M1 10h24M1 14.5h24M7.5 1v18M17.5 1v18" stroke="currentColor" stroke-width="0.8"/>
+                  </svg>
+                  <span>p.18 · Table 3</span>
+                </div>
+                <div class="table-thumb" title="Table 2 — Employer Contribution Split (p.21)">
+                  <svg width="26" height="20" viewBox="0 0 26 20" fill="none">
+                    <rect x="1" y="1" width="24" height="18" rx="2" stroke="currentColor" stroke-width="1"/>
+                    <path d="M1 5.5h24M1 10h24M1 14.5h24M9 1v18M18.5 1v18" stroke="currentColor" stroke-width="0.8"/>
+                  </svg>
+                  <span>p.21 · Table 5</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Sources -->
+            <div class="sources-toggle open" style="margin-top:12px;" onclick="toggleSources(this)">
+              <svg width="13" height="13" viewBox="0 0 13 13" fill="none" style="flex-shrink:0">
+                <path d="M2 3h9M2 6.5h6M2 10h4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+              </svg>
+              2 sources retrieved
+              <svg class="chevron" width="11" height="11" viewBox="0 0 11 11" fill="none">
+                <path d="M2.5 4L5.5 7L8.5 4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </div>
+            <div class="sources-body">
+              <div class="source-item">
+                <div class="source-icon">
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                    <path d="M2 1h8v10H2z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+                    <path d="M4 4h4M4 6.5h4M4 9h2" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+                  </svg>
+                </div>
+                <div class="source-info">
+                  <div class="source-filename">Employees Provident Funds Scheme 1952.pdf</div>
+                  <div class="source-meta">Pages 18–22 · Section 29: Contributions</div>
+                </div>
+                <div class="source-score">0.97</div>
+              </div>
+              <div class="source-item">
+                <div class="source-icon">
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                    <path d="M2 1h8v10H2z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+                    <path d="M4 4h4M4 6.5h4M4 9h2" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+                  </svg>
+                </div>
+                <div class="source-info">
+                  <div class="source-filename">Employees Provident Funds Scheme 1952.pdf</div>
+                  <div class="source-meta">Pages 4–5 · Section 2: Definitions</div>
+                </div>
+                <div class="source-score">0.76</div>
+              </div>
+            </div>
+          </div>
+          <div class="bubble-time">Today, 14:35 · 0.9s · 5 chunks</div>
+        </div>
+      </div>
+
+    </div><!-- /chat-messages -->
+
+    <!-- ── Input Area ── -->
+    <div id="input-area">
+      <div class="input-wrap">
+        <textarea id="question-input"
+          placeholder="Ask anything about your indexed documents…"
+          rows="1"
+          onkeydown="handleKey(event)"
+          oninput="autoResize(this)"></textarea>
+        <button id="ask-btn" onclick="sendMessage()">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M12 7L2.5 2.5v3.5l6 1-6 1v3.5L12 7z" fill="currentColor"/>
+          </svg>
+          Ask
+        </button>
+      </div>
+      <div class="typing-indicator" id="typing">
+        <div class="typing-dots">
+          <span></span><span></span><span></span>
+        </div>
+        Searching knowledge base…
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ══════════════════ RIGHT SIDEBAR ══════════════════ -->
+  <aside id="sidebar-right" class="sidebar">
+
+    <div class="section-heading">
+      <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
+        <circle cx="5.5" cy="5.5" r="4" stroke="currentColor" stroke-width="1.2"/>
+        <path d="M5.5 3.5v2l1.25 1" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
+      </svg>
+      Retrieved Chunks
+      <span class="section-heading-count">5</span>
+    </div>
+
+    <!-- Chunk 1 -->
+    <div class="chunk-card">
+      <div class="chunk-header">
+        <div class="chunk-source">EPS 1995 · p.12–14<br/>§12 Quantum of Pension</div>
+        <div class="chunk-rank">#1</div>
+      </div>
+      <div class="chunk-text">
+        "The amount of pension payable to the member on superannuation shall not be less than rupees one thousand per month… the Central Government shall, from time to time, pay to the Fund…"
+      </div>
+      <div class="relevance-row">
+        <span class="relevance-label">Relevance</span>
+        <div class="relevance-bar"><div class="relevance-fill" style="width:94%;"></div></div>
+        <span class="relevance-score">0.94</span>
+      </div>
+    </div>
+
+    <!-- Chunk 2 -->
+    <div class="chunk-card">
+      <div class="chunk-header">
+        <div class="chunk-source">EPS 1995 · p.6–8<br/>§6 Eligibility for Membership</div>
+        <div class="chunk-rank">#2</div>
+      </div>
+      <div class="chunk-text">
+        "Every employee who is a member of the Fund shall be entitled to become a member of the Pension Fund from the date of joining… provided service of ten years has been completed…"
+      </div>
+      <div class="relevance-row">
+        <span class="relevance-label">Relevance</span>
+        <div class="relevance-bar"><div class="relevance-fill" style="width:89%;"></div></div>
+        <span class="relevance-score">0.89</span>
+      </div>
+    </div>
+
+    <!-- Chunk 3 -->
+    <div class="chunk-card">
+      <div class="chunk-header">
+        <div class="chunk-source">EPF 1952 · p.18–22<br/>§29 Contributions</div>
+        <div class="chunk-rank">#3</div>
+      </div>
+      <div class="chunk-text">
+        "The contributions payable by the employer under the Scheme shall be at the rate of twelve percent of the basic wages, dearness allowance and retaining allowance…"
+      </div>
+      <div class="relevance-row">
+        <span class="relevance-label">Relevance</span>
+        <div class="relevance-bar"><div class="relevance-fill" style="width:97%;"></div></div>
+        <span class="relevance-score">0.97</span>
+      </div>
+    </div>
+
+    <!-- Chunk 4 -->
+    <div class="chunk-card">
+      <div class="chunk-header">
+        <div class="chunk-source">EPF Amendment 2023 · p.3<br/>§4 Minimum Pension Revision</div>
+        <div class="chunk-rank">#4</div>
+      </div>
+      <div class="chunk-text">
+        "Notwithstanding anything in the principal scheme, the minimum pension payable shall be enhanced to rupees one thousand with effect from the first day of September 2014…"
+      </div>
+      <div class="relevance-row">
+        <span class="relevance-label">Relevance</span>
+        <div class="relevance-bar"><div class="relevance-fill" style="width:81%;"></div></div>
+        <span class="relevance-score">0.81</span>
+      </div>
+    </div>
+
+    <!-- Chunk 5 -->
+    <div class="chunk-card">
+      <div class="chunk-header">
+        <div class="chunk-source">EPF 1952 · p.4–5<br/>§2 Definitions</div>
+        <div class="chunk-rank">#5</div>
+      </div>
+      <div class="chunk-text">
+        "Basic wages means all emoluments which are earned by an employee while on duty… but does not include the cash value of any food concession or any dearness allowance…"
+      </div>
+      <div class="relevance-row">
+        <span class="relevance-label">Relevance</span>
+        <div class="relevance-bar"><div class="relevance-fill" style="width:76%;"></div></div>
+        <span class="relevance-score">0.76</span>
+      </div>
+    </div>
+
+    <div style="height:14px;"></div>
+  </aside>
+
+</div><!-- /app -->
+
+<script>
+  /* ── Auto-resize textarea ── */
+  function autoResize(el) {
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 140) + 'px';
+  }
+
+  /* ── Enter to send ── */
+  function handleKey(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  }
+
+  /* ── Toggle Sources collapsible ── */
+  function toggleSources(btn) {
+    const body = btn.nextElementSibling;
+    const isOpen = btn.classList.contains('open');
+    if (isOpen) {
+      body.classList.add('collapsed');
+      btn.classList.remove('open');
+    } else {
+      body.classList.remove('collapsed');
+      btn.classList.add('open');
+    }
+  }
+
+  /* ── Select chat history item ── */
+  function selectChat(el) {
+    document.querySelectorAll('.history-item').forEach(c => c.classList.remove('active'));
+    el.classList.add('active');
+  }
+
+  /* ── New chat ── */
+  function newChat() {
+    document.querySelectorAll('.history-item').forEach(c => c.classList.remove('active'));
+    document.getElementById('question-input').focus();
+  }
+
+  /* ── Toggle right sidebar ── */
+  function toggleRightSidebar() {
+    const sb = document.getElementById('sidebar-right');
+    const app = document.getElementById('app');
+    if (sb.style.display === 'none') {
+      sb.style.display = 'flex';
+      app.style.gridTemplateColumns = '256px 1fr 272px';
+    } else {
+      sb.style.display = 'none';
+      app.style.gridTemplateColumns = '256px 1fr 0';
+    }
+  }
+
+  /* ── Mock responses pool ── */
+  const mockResponses = [
+    {
+      text: `Under the <mark>EPS 1995</mark>, the <mark>withdrawal benefit</mark> is available to members who have not completed 10 years of eligible service. The amount is calculated based on the member's last drawn salary and number of years of service, using the <strong style="color:var(--text-primary);">Table D</strong> prescribed in the Scheme.<br/><br/><p style="font-weight:600;color:var(--text-secondary);font-size:0.82rem;">Key conditions</p><ul style="margin:7px 0 7px 16px;color:var(--text-secondary);display:flex;flex-direction:column;gap:5px;"><li>Member must be less than 58 years of age</li><li>Must not be receiving any pension benefits</li><li>Requires formal application via <mark>Form 10C</mark></li></ul>`,
+      sources: [
+        { file: "Employees Pension Scheme 1995.pdf", pages: "Pages 28–31", section: "§14: Withdrawal Benefit", score: "0.91" },
+        { file: "Employees Pension Scheme 1995.pdf", pages: "Pages 35–36", section: "§19: Scheme Certificate", score: "0.83" }
+      ]
+    },
+    {
+      text: `The <mark>EDLI (Employees' Deposit Linked Insurance) Scheme 1976</mark> provides life insurance coverage to EPF members.<br/><br/><p style="font-weight:600;color:var(--text-secondary);font-size:0.82rem;">Coverage details</p><ul style="margin:7px 0 7px 16px;color:var(--text-secondary);display:flex;flex-direction:column;gap:5px;"><li>Maximum insurance benefit: <mark>₹7 lakh</mark> (revised 2020)</li><li>Minimum assurance benefit: <mark>₹2.5 lakh</mark></li><li>Employer contribution: <mark>0.50%</mark> of wages (max ₹15,000)</li><li>No contribution from the employee</li></ul><br/><p style="color:var(--text-muted);font-size:0.82rem;">The benefit is payable to the nominee or legal heir of the deceased member.</p>`,
+      sources: [
+        { file: "Employees Provident Funds Scheme 1952.pdf", pages: "Pages 44–48", section: "§22A: Insurance Benefits", score: "0.95" }
+      ]
+    },
+    {
+      text: `According to <mark>Section 7Q</mark> of the EPF & MP Act 1952, interest is payable by the employer on delayed contributions at the rate of <mark>12% per annum</mark>.<br/><br/>Additionally, under <mark>Section 14B</mark>, damages are levied for delayed deposit ranging from <strong style="color:var(--text-primary);">5% to 25% per annum</strong> depending on the delay period:<ul style="margin:7px 0 7px 16px;color:var(--text-secondary);display:flex;flex-direction:column;gap:5px;"><li>Up to 2 months: 5%</li><li>2–4 months: 10%</li><li>4–6 months: 15%</li><li>Beyond 6 months: 25%</li></ul>`,
+      sources: [
+        { file: "Employees Provident Funds Scheme 1952.pdf", pages: "Pages 52–55", section: "§14B: Damages for Default", score: "0.92" },
+        { file: "Employees Provident Funds Scheme 1952.pdf", pages: "Page 57", section: "§7Q: Interest on Delayed Payment", score: "0.88" }
+      ]
+    }
+  ];
+
+  let responseIdx = 0;
+
+  const sourceIconSVG = `<svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+    <path d="M2 1h8v10H2z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+    <path d="M4 4h4M4 6.5h4M4 9h2" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+  </svg>`;
+
+  /* ── Send message ── */
+  function sendMessage() {
+    const input = document.getElementById('question-input');
+    const text = input.value.trim();
+    if (!text) return;
+
+    const chat = document.getElementById('chat-messages');
+    const typing = document.getElementById('typing');
+
+    // Append user message
+    const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const userRow = document.createElement('div');
+    userRow.className = 'msg-row user';
+    userRow.innerHTML = `
+      <div class="avatar avatar-user">A</div>
+      <div>
+        <div class="bubble bubble-user">${escapeHtml(text)}</div>
+        <div class="bubble-time">Today, ${now}</div>
+      </div>`;
+    chat.appendChild(userRow);
+
+    input.value = '';
+    input.style.height = 'auto';
+
+    // Show typing
+    typing.classList.add('visible');
+    chat.scrollTop = chat.scrollHeight;
+
+    // Simulate response delay
+    const delay = 1200 + Math.random() * 800;
+    setTimeout(() => {
+      typing.classList.remove('visible');
+      const resp = mockResponses[responseIdx % mockResponses.length];
+      responseIdx++;
+
+      const sources = resp.sources.map(s => `
+        <div class="source-item">
+          <div class="source-icon">${sourceIconSVG}</div>
+          <div class="source-info">
+            <div class="source-filename">${s.file}</div>
+            <div class="source-meta">${s.pages} · ${s.section}</div>
+          </div>
+          <div class="source-score">${s.score}</div>
+        </div>`).join('');
+
+      const aiAvatarSVG = `<svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+        <path d="M6.5 1.5L11.5 4.25V8.75L6.5 11.5L1.5 8.75V4.25L6.5 1.5Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+        <path d="M6.5 5L8.5 6.25V8.5L6.5 9.75L4.5 8.5V6.25L6.5 5Z" fill="currentColor" opacity="0.5"/>
+      </svg>`;
+
+      const chevronSVG = `<svg class="chevron" width="11" height="11" viewBox="0 0 11 11" fill="none">
+        <path d="M2.5 4L5.5 7L8.5 4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>`;
+
+      const aiRow = document.createElement('div');
+      aiRow.className = 'msg-row';
+      const elapsed = (delay / 1000).toFixed(1);
+      aiRow.innerHTML = `
+        <div class="avatar avatar-ai">${aiAvatarSVG}</div>
+        <div style="max-width:72%;">
+          <div class="bubble bubble-ai">
+            <p>${resp.text}</p>
+            <div class="sources-toggle open" onclick="toggleSources(this)" style="margin-top:12px;">
+              <svg width="13" height="13" viewBox="0 0 13 13" fill="none" style="flex-shrink:0">
+                <path d="M2 3h9M2 6.5h6M2 10h4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+              </svg>
+              ${resp.sources.length} source${resp.sources.length > 1 ? 's' : ''} retrieved
+              ${chevronSVG}
+            </div>
+            <div class="sources-body">${sources}</div>
+          </div>
+          <div class="bubble-time">Today, ${now} · ${elapsed}s · ${resp.sources.length + 2} chunks</div>
+        </div>`;
+      chat.appendChild(aiRow);
+      chat.scrollTop = chat.scrollHeight;
+
+      // Add chunk to right sidebar
+      addChunkToSidebar(resp.sources[0], resp.sources[0].score);
+
+    }, delay);
+  }
+
+  function escapeHtml(str) {
+    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function addChunkToSidebar(source, score) {
+    const sb = document.getElementById('sidebar-right');
+    const pct = Math.round(parseFloat(score) * 100);
+    const card = document.createElement('div');
+    card.className = 'chunk-card';
+    card.innerHTML = `
+      <div class="chunk-header">
+        <div class="chunk-source">${source.file.replace('.pdf','').substring(0,28)}…<br/>${source.section}</div>
+        <div class="chunk-rank">new</div>
+      </div>
+      <div class="chunk-text">${source.pages} — newly retrieved context chunk added to the retrieval window.</div>
+      <div class="relevance-row">
+        <span class="relevance-label">Relevance</span>
+        <div class="relevance-bar"><div class="relevance-fill" style="width:0%;"></div></div>
+        <span class="relevance-score">${score}</span>
+      </div>`;
+    // Insert after header
+    const header = sb.querySelector('.section-heading');
+    header.after(card);
+    // Animate bar
+    setTimeout(() => {
+      card.querySelector('.relevance-fill').style.width = pct + '%';
+    }, 50);
+  }
+
+  /* ── Animate relevance bars on load ── */
+  document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('.relevance-fill').forEach(bar => {
+      const target = bar.style.width;
+      bar.style.width = '0%';
+      setTimeout(() => { bar.style.width = target; }, 200 + Math.random() * 300);
+    });
+  });
+</script>
+
+</body>
+</html>

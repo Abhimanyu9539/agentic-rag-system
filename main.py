@@ -1,10 +1,14 @@
 import os
+from collections import defaultdict
+
+from dotenv import load_dotenv
 
 from src.common.logging import get_logger
 from src.rag.fetch_table import extract_tables_from_folder
 from src.rag.chunker import chunk_pdf, save_chunks
-from collections import defaultdict
+from src.rag.ingestor import ingest_folder
 
+load_dotenv()
 logger = get_logger(__name__)
 
 RAW_DIR       = os.path.join("data", "raw")
@@ -49,7 +53,14 @@ def main():
         save_chunks(chunks, os.path.join(CHUNKS_DIR, stem + "_chunks.json"))
         total_chunks += len(chunks)
 
-    logger.info("=== Pipeline Complete: %d chunk(s) across %d PDF(s) ===", total_chunks, len(by_pdf))
+    logger.info("=== Chunking Complete: %d chunk(s) across %d PDF(s) ===", total_chunks, len(by_pdf))
+
+    # Step 3: Embed and ingest into Pinecone
+    logger.info("Step 3: Embedding chunks and upserting to Pinecone")
+    total_vectors = ingest_folder(CHUNKS_DIR, index_name=os.getenv("PINECONE_INDEX_NAME", "agentic-rag"))
+    logger.info("Upserted %d vector(s) to Pinecone", total_vectors)
+
+    logger.info("=== Pipeline Complete ===")
 
 
 if __name__ == "__main__":
