@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -5,9 +6,10 @@ from pathlib import Path
 from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings
 from langchain_pinecone import PineconeVectorStore
+from pinecone import Pinecone
 
 from ..common.logging import get_logger
-from ..config.constants import _BATCH_SIZE 
+from ..config.constants import _BATCH_SIZE
 
 logger = get_logger(__name__)
 
@@ -18,28 +20,60 @@ def load_chunks_from_json(chunks_path: str) -> list[Document]:
     return [Document(page_content=item["text"], metadata=item["metadata"]) for item in raw]
 
 
+def _file_hash(chunks_path: str) -> str:
+    """SHA-256 of the chunk file's raw bytes — stable identity for its source PDF."""
+    return hashlib.sha256(Path(chunks_path).read_bytes()).hexdigest()[:16]
+
+
+def _make_id(file_hash: str, chunk_index: int) -> str:
+    """Deterministic vector ID: file content hash + chunk index.
+    Same file → same IDs (re-run overwrites). Different files, same name → different IDs.
+    """
+    key = f"{file_hash}::{chunk_index}"
+    return hashlib.sha256(key.encode()).hexdigest()[:32]
+
+
 def _sanitize_metadata(doc: Document) -> Document:
-    """Pinecone only allows list[str] for list-type metadata fields — convert pages to list[str]."""
+    """Pinecone requires list-type metadata to be list[str] — convert pages."""
     meta = dict(doc.metadata)
     if "pages" in meta:
         meta["pages"] = [str(p) for p in meta["pages"]]
     return Document(page_content=doc.page_content, metadata=meta)
 
 
-def embed_and_upsert(chunks: list[Document], index_name: str, namespace: str = "") -> int:
+def embed_and_upsert(chunks: list[Document], index_name: str, file_hash: str, namespace: str = "") -> int:
+    pc    = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
+    index = pc.Index(index_name)
+
     embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
     chunks = [_sanitize_metadata(c) for c in chunks]
-    total = 0
+    total = skipped = 0
+
     for i in range(0, len(chunks), _BATCH_SIZE):
         batch = chunks[i : i + _BATCH_SIZE]
+        ids   = [_make_id(file_hash, c.metadata.get("chunk_index", i + j)) for j, c in enumerate(batch)]
+
+        existing = set(index.fetch(ids=ids, namespace=namespace).vectors.keys())
+        new_pairs = [(c, id_) for c, id_ in zip(batch, ids) if id_ not in existing]
+
+        if not new_pairs:
+            skipped += len(batch)
+            logger.info("Batch %d–%d already in Pinecone, skipping OpenAI call", i + 1, i + len(batch))
+            continue
+
+        new_docs, new_ids = zip(*new_pairs)
         PineconeVectorStore.from_documents(
-            documents=batch,
+            documents=list(new_docs),
             embedding=embeddings,
             index_name=index_name,
             namespace=namespace,
+            ids=list(new_ids),
         )
-        total += len(batch)
-        logger.info("Upserted batch %d–%d (%d vectors so far)", i + 1, i + len(batch), total)
+        total   += len(new_docs)
+        skipped += len(batch) - len(new_docs)
+        logger.info("Upserted %d new, skipped %d existing (batch %d–%d)", len(new_docs), len(batch) - len(new_docs), i + 1, i + len(batch))
+
+    logger.info("Done — %d upserted, %d skipped (already existed)", total, skipped)
     return total
 
 
@@ -50,6 +84,7 @@ def ingest_folder(chunks_dir: str, index_name: str, namespace: str = "") -> int:
     for path in chunk_files:
         logger.info("Loading chunks from %s", path.name)
         chunks = load_chunks_from_json(str(path))
-        logger.info("Embedding and upserting %d chunk(s) from %s", len(chunks), path.name)
-        total += embed_and_upsert(chunks, index_name=index_name, namespace=namespace)
+        fhash = _file_hash(str(path))
+        logger.info("Embedding and upserting %d chunk(s) from %s (hash=%s)", len(chunks), path.name, fhash)
+        total += embed_and_upsert(chunks, index_name=index_name, file_hash=fhash, namespace=namespace)
     return total
