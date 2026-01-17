@@ -1,15 +1,14 @@
 import hashlib
 import json
-import os
 from pathlib import Path
 
 from langchain_core.documents import Document
-from langchain_openai import OpenAIEmbeddings
 from langchain_pinecone import PineconeVectorStore
-from pinecone import Pinecone
 
 from ..common.logging import get_logger
 from ..config.constants import _BATCH_SIZE
+from ..llm_adapters.embeddings.base import get_embeddings_model
+from ..db.pinecone_client import delete_vectors_by_filter, get_pinecone_index
 
 logger = get_logger(__name__)
 
@@ -41,11 +40,13 @@ def _sanitize_metadata(doc: Document) -> Document:
     return Document(page_content=doc.page_content, metadata=meta)
 
 
-def embed_and_upsert(chunks: list[Document], index_name: str, file_hash: str, namespace: str = "") -> int:
-    pc    = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
-    index = pc.Index(index_name)
-
-    embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+def embed_and_upsert(
+    chunks: list[Document],
+    index,
+    vectorstore: PineconeVectorStore,
+    file_hash: str,
+    namespace: str = "",
+) -> int:
     chunks = [_sanitize_metadata(c) for c in chunks]
     total = skipped = 0
 
@@ -62,13 +63,7 @@ def embed_and_upsert(chunks: list[Document], index_name: str, file_hash: str, na
             continue
 
         new_docs, new_ids = zip(*new_pairs)
-        PineconeVectorStore.from_documents(
-            documents=list(new_docs),
-            embedding=embeddings,
-            index_name=index_name,
-            namespace=namespace,
-            ids=list(new_ids),
-        )
+        vectorstore.add_documents(documents=list(new_docs), ids=list(new_ids))
         total   += len(new_docs)
         skipped += len(batch) - len(new_docs)
         logger.info("Upserted %d new, skipped %d existing (batch %d–%d)", len(new_docs), len(batch) - len(new_docs), i + 1, i + len(batch))
@@ -80,11 +75,27 @@ def embed_and_upsert(chunks: list[Document], index_name: str, file_hash: str, na
 def ingest_folder(chunks_dir: str, index_name: str, namespace: str = "") -> int:
     chunk_files = list(Path(chunks_dir).glob("*_chunks.json"))
     logger.info("Found %d chunk file(s) in %s", len(chunk_files), chunks_dir)
+
+    index = get_pinecone_index(index_name)
+    embeddings = get_embeddings_model(model="text-embedding-3-small", model_provider="openai")
+    vectorstore = PineconeVectorStore(index=index, embedding=embeddings, namespace=namespace)
+
     total = 0
     for path in chunk_files:
         logger.info("Loading chunks from %s", path.name)
         chunks = load_chunks_from_json(str(path))
+        if not chunks:
+            logger.warning("No chunks in %s, skipping", path.name)
+            continue
         fhash = _file_hash(str(path))
+        source_pdf = chunks[0].metadata.get("source_pdf", path.name)
         logger.info("Embedding and upserting %d chunk(s) from %s (hash=%s)", len(chunks), path.name, fhash)
-        total += embed_and_upsert(chunks, index_name=index_name, file_hash=fhash, namespace=namespace)
+        try:
+            total += embed_and_upsert(chunks, index=index, vectorstore=vectorstore, file_hash=fhash, namespace=namespace)
+        except Exception:
+            logger.exception("Ingestion failed for %s — rolling back all vectors for this file", source_pdf)
+            try:
+                delete_vectors_by_filter({"source_pdf": source_pdf}, index_name=index_name, namespace=namespace)
+            except Exception:
+                logger.exception("Rollback also failed for %s — index may contain partial vectors", source_pdf)
     return total
