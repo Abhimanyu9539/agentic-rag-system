@@ -12,3 +12,7 @@ SENTINEL_RE = re.compile(r"<!-- page:(\d+) -->")
 # ---------------------------------------------------------------------------
 # Vector DB Batch Size (Pinecone recommends <=100 vectors per upsert)
 _BATCH_SIZE = 100
+
+# ---------------------------------------------------------------------------
+# Supabase
+SUPABASE_FILE_REGISTRY_TABLE = "file_registry"

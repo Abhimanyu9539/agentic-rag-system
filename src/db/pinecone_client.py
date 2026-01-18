@@ -3,28 +3,29 @@ from typing import Any
 
 from pinecone import Pinecone, ServerlessSpec
 
-from ..common.logging import get_logger
-from ..config.constants import _BATCH_SIZE
+from src.common.logging import get_logger
+from src.config.constants import _BATCH_SIZE
 
 logger = get_logger(__name__)
 
-# Defaults for index creation. 1536 matches OpenAI text-embedding-3-small.
 _DEFAULT_DIMENSION = 1536
 _DEFAULT_METRIC = "cosine"
 _DEFAULT_CLOUD = os.getenv("PINECONE_CLOUD", "aws")
 _DEFAULT_REGION = os.getenv("PINECONE_REGION", "us-east-1")
 
-_client: Pinecone | None = None
+_pinecone: Pinecone | None = None
 _ensured_indexes: set[str] = set()
 
 
 def get_pinecone_client() -> Pinecone:
-    """Cached Pinecone client — avoids rebuilding per call."""
-    global _client
-    if _client is None:
-        logger.info("Initializing Pinecone client")
-        _client = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
-    return _client
+    global _pinecone
+    if _pinecone is None:
+        try:
+            logger.info("Initializing Pinecone client")
+            _pinecone = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
+        except Exception as e:
+            raise RuntimeError(f"Failed to initialize Pinecone client: {e}") from e
+    return _pinecone
 
 
 def ensure_index(
@@ -32,27 +33,29 @@ def ensure_index(
     dimension: int = _DEFAULT_DIMENSION,
     metric: str = _DEFAULT_METRIC,
 ) -> None:
-    """Create the index if it doesn't exist. Memoized per process."""
     if index_name in _ensured_indexes:
         return
-    pc = get_pinecone_client()
-    existing = {idx.name for idx in pc.list_indexes()}
-    if index_name not in existing:
-        logger.info("Index '%s' not found — creating (dim=%d, metric=%s)", index_name, dimension, metric)
-        pc.create_index(
-            name=index_name,
-            dimension=dimension,
-            metric=metric,
-            spec=ServerlessSpec(cloud=_DEFAULT_CLOUD, region=_DEFAULT_REGION),
-        )
-        logger.info("Created Pinecone index: %s", index_name)
-    else:
-        logger.info("Pinecone index '%s' confirmed active", index_name)
-    _ensured_indexes.add(index_name)
+    try:
+        pc = get_pinecone_client()
+        existing = {idx.name for idx in pc.list_indexes()}
+        if index_name not in existing:
+            logger.info(f"Index '{index_name}' not found - creating (dim={dimension}, metric={metric})")
+            pc.create_index(
+                name=index_name,
+                dimension=dimension,
+                metric=metric,
+                spec=ServerlessSpec(cloud=_DEFAULT_CLOUD, region=_DEFAULT_REGION),
+            )
+            logger.info(f"Created Pinecone index: {index_name}")
+        else:
+            logger.info(f"Pinecone index '{index_name}' confirmed active")
+        _ensured_indexes.add(index_name)
+    except Exception as e:
+        logger.error(f"Failed to ensure index '{index_name}': {e}")
+        raise
 
 
 def get_pinecone_index(index_name: str):
-    """Return the named index, auto-creating it if missing."""
     ensure_index(index_name)
     return get_pinecone_client().Index(index_name)
 
@@ -63,14 +66,17 @@ def upsert_vectors(
     namespace: str = "",
     batch_size: int = _BATCH_SIZE,
 ) -> int:
-    """Upsert pre-embedded vectors. Each item: {"id", "values", "metadata"}."""
     index = get_pinecone_index(index_name)
     upserted = 0
     for i in range(0, len(vectors), batch_size):
         batch = vectors[i : i + batch_size]
-        index.upsert(vectors=batch, namespace=namespace)
-        upserted += len(batch)
-        logger.info("Upserted batch of %d vectors to '%s'", len(batch), index_name)
+        try:
+            index.upsert(vectors=batch, namespace=namespace)
+            upserted += len(batch)
+            logger.info(f"Upserted batch of {len(batch)} vectors to '{index_name}'")
+        except Exception as e:
+            logger.error(f"Failed to upsert batch {i}–{i + len(batch)} to '{index_name}': {e}")
+            raise
     return upserted
 
 
@@ -79,7 +85,10 @@ def delete_vectors_by_filter(
     index_name: str,
     namespace: str = "",
 ) -> None:
-    """Delete vectors matching a metadata filter (e.g. cleanup by source_file)."""
-    index = get_pinecone_index(index_name)
-    index.delete(filter=filter_dict, namespace=namespace)
-    logger.info("Deleted vectors from '%s' matching filter: %s", index_name, filter_dict)
+    try:
+        index = get_pinecone_index(index_name)
+        index.delete(filter=filter_dict, namespace=namespace)
+        logger.info(f"Deleted vectors from '{index_name}' matching filter: {filter_dict}")
+    except Exception as e:
+        logger.error(f"Failed to delete vectors from '{index_name}' with filter {filter_dict}: {e}")
+        raise

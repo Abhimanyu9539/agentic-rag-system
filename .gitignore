@@ -15,6 +15,7 @@ logs/
 temp/
 *.log
 *.tmp
+CLAUDE.md
 
 # Data
 data/processed/

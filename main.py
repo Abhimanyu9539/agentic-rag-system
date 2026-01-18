@@ -6,7 +6,9 @@ from dotenv import load_dotenv
 from src.common.logging import get_logger
 from src.rag.fetch_table import extract_tables_from_folder
 from src.rag.chunker import chunk_pdf, save_chunks
-from src.rag.ingestor import ingest_folder
+from src.rag.ingestor import file_hash
+from src.rag.sync import sync_folder
+from src.db.supabase_client import get_registry_entry
 
 load_dotenv()
 logger = get_logger(__name__)
@@ -22,17 +24,34 @@ METADATA_PATH = os.path.join(TABLES_DIR, "table_metadata.json")
 def main():
     logger.info("=== Agentic RAG Pipeline Start ===")
 
+    # Pre-compute unchanged PDFs to skip parse+chunk entirely
+    skip_pdfs: set[str] = set()
+    for pdf_name in os.listdir(RAW_DIR):
+        if not pdf_name.lower().endswith(".pdf"):
+            continue
+        entry = get_registry_entry(pdf_name)
+        if entry and entry.get("status") == "active":
+            if entry.get("file_hash") == file_hash(os.path.join(RAW_DIR, pdf_name)):
+                skip_pdfs.add(pdf_name)
+    if skip_pdfs:
+        logger.info("Skipping %d unchanged PDF(s): %s", len(skip_pdfs), sorted(skip_pdfs))
+
     # Step 1: Extract tables and parse PDFs
     logger.info("Step 1: Extracting tables and parsing PDFs from %s", RAW_DIR)
-    table_metadata = extract_tables_from_folder(
-        folder_path=RAW_DIR,
-        output_dir=TABLES_DIR,
-        parsed_dir=PARSED_DIR,
-        metadata_path=METADATA_PATH,
-    )
+    try:
+        table_metadata = extract_tables_from_folder(
+            folder_path=RAW_DIR,
+            output_dir=TABLES_DIR,
+            parsed_dir=PARSED_DIR,
+            metadata_path=METADATA_PATH,
+            skip_files=skip_pdfs,
+        )
+    except Exception as e:
+        logger.error(f"Step 1 failed — table extraction aborted: {e}")
+        raise
 
     if not table_metadata:
-        logger.warning("No tables extracted. Check that PDFs exist in %s", RAW_DIR)
+        logger.warning(f"No tables extracted. Check that PDFs exist in {RAW_DIR}")
 
     # Step 2: Chunk each PDF's markdown
     logger.info("Step 2: Chunking parsed markdown files")
@@ -46,19 +65,31 @@ def main():
         md_path = os.path.join(PARSED_DIR, stem, stem + ".md")
 
         if not os.path.exists(md_path):
-            logger.warning("Markdown not found for %s, skipping", source_pdf)
+            logger.warning(f"Markdown not found for {source_pdf}, skipping")
             continue
 
-        chunks = chunk_pdf(md_path, pdf_table_meta, source_pdf)
-        save_chunks(chunks, os.path.join(CHUNKS_DIR, stem + "_chunks.json"))
-        total_chunks += len(chunks)
+        try:
+            chunks = chunk_pdf(md_path, pdf_table_meta, source_pdf)
+            save_chunks(chunks, os.path.join(CHUNKS_DIR, stem + "_chunks.json"))
+            total_chunks += len(chunks)
+        except Exception as e:
+            logger.error(f"Step 2 failed for {source_pdf}: {e}")
+            raise
 
-    logger.info("=== Chunking Complete: %d chunk(s) across %d PDF(s) ===", total_chunks, len(by_pdf))
+    logger.info(f"=== Chunking Complete: {total_chunks} chunk(s) across {len(by_pdf)} PDF(s) ===")
 
-    # Step 3: Embed and ingest into Pinecone
-    logger.info("Step 3: Embedding chunks and upserting to Pinecone")
-    total_vectors = ingest_folder(CHUNKS_DIR, index_name=os.getenv("PINECONE_INDEX_NAME", "agentic-rag"))
-    logger.info("Upserted %d vector(s) to Pinecone", total_vectors)
+    # Step 3: Sync chunks into Pinecone via registry
+    logger.info("Step 3: Syncing chunks to Pinecone")
+    try:
+        summary = sync_folder(
+            chunks_dir=CHUNKS_DIR,
+            raw_dir=RAW_DIR,
+            index_name=os.getenv("PINECONE_INDEX_NAME", "agentic-rag"),
+        )
+    except Exception as e:
+        logger.error(f"Step 3 failed — sync aborted: {e}")
+        raise
+    logger.info("Sync result — %s", summary)
 
     logger.info("=== Pipeline Complete ===")
 

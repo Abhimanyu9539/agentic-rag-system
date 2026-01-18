@@ -5,8 +5,8 @@ import re
 from langchain_core.documents import Document
 from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
 
-from ..common.logging import get_logger
-from ..config.constants import ODL_PAGE_PATTERN as _ODL_PAGE_PATTERN, SENTINEL_RE as _SENTINEL_RE
+from src.common.logging import get_logger
+from src.config.constants import ODL_PAGE_PATTERN as _ODL_PAGE_PATTERN, SENTINEL_RE as _SENTINEL_RE
 
 logger = get_logger(__name__)
 
@@ -16,14 +16,13 @@ logger = get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 def load_markdown_with_page_markers(md_path: str) -> str:
-    """
-    Read the .md file saved by parse_pdf and replace the OpenDataLoader page
-    separators with <!-- page:N --> sentinels so that page numbers can be
-    recovered from each chunk after splitting.
-    """
-    with open(md_path, "r", encoding="utf-8") as f:
-        content = f.read()
-    logger.debug("Loaded markdown from %s", md_path)
+    try:
+        with open(md_path, "r", encoding="utf-8") as f:
+            content = f.read()
+    except Exception as e:
+        logger.error(f"Failed to read markdown file {md_path}: {e}")
+        raise
+    logger.debug(f"Loaded markdown from {md_path}")
     return _ODL_PAGE_PATTERN.sub(lambda m: f"<!-- page:{m.group(1)} -->", content)
 
 
@@ -32,20 +31,16 @@ def load_markdown_with_page_markers(md_path: str) -> str:
 # ---------------------------------------------------------------------------
 
 def split_by_headers(markdown: str) -> list[Document]:
-    """
-    Split on # / ## / ### boundaries.  Each resulting Document carries heading
-    context (h1, h2, h3) in its metadata — the only way to preserve section
-    information without post-hoc parsing.
-
-    If the markdown has no heading markers the splitter returns the whole text
-    as a single Document; split_chunks will still subdivide it by size.
-    """
     splitter = MarkdownHeaderTextSplitter(
         headers_to_split_on=[("#", "h1"), ("##", "h2"), ("###", "h3")],
         strip_headers=False,
     )
-    docs = splitter.split_text(markdown)
-    logger.debug("Header split produced %d section(s)", len(docs))
+    try:
+        docs = splitter.split_text(markdown)
+    except Exception as e:
+        logger.error(f"Header splitting failed: {e}")
+        raise
+    logger.debug(f"Header split produced {len(docs)} section(s)")
     return docs
 
 
@@ -58,14 +53,17 @@ def split_chunks(
     chunk_size: int = 1000,
     chunk_overlap: int = 150,
 ) -> list[Document]:
-    """Subdivide any header-split Document that still exceeds chunk_size."""
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
         add_start_index=True,
     )
-    chunks = splitter.split_documents(header_docs)
-    logger.debug("Size split produced %d chunk(s) (size=%d, overlap=%d)", len(chunks), chunk_size, chunk_overlap)
+    try:
+        chunks = splitter.split_documents(header_docs)
+    except Exception as e:
+        logger.error(f"Size splitting failed: {e}")
+        raise
+    logger.debug(f"Size split produced {len(chunks)} chunk(s) (size={chunk_size}, overlap={chunk_overlap})")
     return chunks
 
 
@@ -88,16 +86,12 @@ def _strip_sentinels(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 def build_page_table_index(table_metadata: list[dict]) -> dict[int, list[str]]:
-    """
-    Build {page_number: [image_path, ...]} from the list produced by
-    fetch_table.extract_tables_as_images / extract_tables_from_folder.
-    """
     index: dict[int, list[str]] = {}
     for entry in table_metadata:
         img = entry.get("image_path", "")
         for page in entry.get("pages", []):
             index.setdefault(page, []).append(img)
-    logger.debug("Built page-table index for %d page(s)", len(index))
+    logger.debug(f"Built page-table index for {len(index)} page(s)")
     return index
 
 
@@ -110,10 +104,6 @@ def associate_tables(
     page_table_index: dict[int, list[str]],
     source_pdf: str,
 ) -> list[Document]:
-    """
-    Attach source_pdf, chunk_index, pages, section, and table_images to each
-    chunk's metadata, then strip page sentinels from page_content.
-    """
     last_page = 1
     result: list[Document] = []
 
@@ -121,7 +111,6 @@ def associate_tables(
         pages = _extract_pages(chunk.page_content, last_page)
         last_page = pages[-1]
 
-        # Collect image paths for all pages (deduplicated, stable order)
         seen: set[str] = set()
         images: list[str] = []
         for p in pages:
@@ -130,7 +119,6 @@ def associate_tables(
                     seen.add(img)
                     images.append(img)
 
-        # Deepest non-empty heading key becomes the section label
         hm = chunk.metadata or {}
         section = hm.get("h3") or hm.get("h2") or hm.get("h1") or ""
 
@@ -145,7 +133,7 @@ def associate_tables(
             },
         ))
 
-    logger.debug("Associated tables for %d chunk(s) from %s", len(result), source_pdf)
+    logger.debug(f"Associated tables for {len(result)} chunk(s) from {source_pdf}")
     return result
 
 
@@ -160,29 +148,30 @@ def chunk_pdf(
     chunk_size: int = 1000,
     chunk_overlap: int = 150,
 ) -> list[Document]:
-    """
-    Full pipeline: markdown file → header split → size split → table association.
-
-    Returns LangChain Documents ready for embedding and Pinecone ingestion.
-    Each Document metadata has: source_pdf, pages, section, chunk_index, table_images.
-    """
-    logger.info("Chunking %s (chunk_size=%d, overlap=%d)", source_pdf, chunk_size, chunk_overlap)
-    markdown    = load_markdown_with_page_markers(md_path)
-    header_docs = split_by_headers(markdown)
-    chunks      = split_chunks(header_docs, chunk_size, chunk_overlap)
-    page_index  = build_page_table_index(table_metadata)
-    result      = associate_tables(chunks, page_index, source_pdf)
-    logger.info("Produced %d chunk(s) for %s", len(result), source_pdf)
+    logger.info(f"Chunking {source_pdf} (chunk_size={chunk_size}, overlap={chunk_overlap})")
+    try:
+        markdown    = load_markdown_with_page_markers(md_path)
+        header_docs = split_by_headers(markdown)
+        chunks      = split_chunks(header_docs, chunk_size, chunk_overlap)
+        page_index  = build_page_table_index(table_metadata)
+        result      = associate_tables(chunks, page_index, source_pdf)
+    except Exception as e:
+        logger.error(f"Chunking failed for {source_pdf}: {e}")
+        raise
+    logger.info(f"Produced {len(result)} chunk(s) for {source_pdf}")
     return result
 
 
 def save_chunks(chunks: list[Document], output_path: str) -> None:
-    """Persist chunks as JSON for inspection before embedding."""
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     payload = [{"text": c.page_content, "metadata": c.metadata} for c in chunks]
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2, ensure_ascii=False)
-    logger.info("%d chunk(s) saved -> %s", len(chunks), output_path)
+    try:
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.error(f"Failed to save chunks to {output_path}: {e}")
+        raise
+    logger.info(f"{len(chunks)} chunk(s) saved -> {output_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -207,7 +196,7 @@ if __name__ == "__main__":
         stem    = os.path.splitext(source_pdf)[0]
         md_path = os.path.join(parsed_dir, stem, stem + ".md")
         if not os.path.exists(md_path):
-            logger.warning("Markdown not found for %s, skipping", source_pdf)
+            logger.warning(f"Markdown not found for {source_pdf}, skipping")
             continue
 
         chunks = chunk_pdf(md_path, table_meta, source_pdf)

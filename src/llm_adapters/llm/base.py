@@ -15,7 +15,7 @@ def get_chat_model(
     temperature: float | None = None,
     max_tokens: int | None = None,
 ) -> BaseChatModel:
-    logger.info("Initializing chat model provider=%s model=%s", model_provider, model)
+    logger.info(f"Initializing chat model provider={model_provider} model={model}")
 
     try:
         chat_model = init_chat_model(
@@ -24,11 +24,7 @@ def get_chat_model(
             temperature=temperature,
         )
     except Exception as exc:
-        logger.exception(
-            "Failed to initialize chat model provider=%s model=%s",
-            model_provider,
-            model,
-        )
+        logger.exception(f"Failed to initialize chat model provider={model_provider} model={model}")
         raise AdapterInitializationError(
             "Unable to initialize chat model.",
             component="llm",
@@ -36,11 +32,10 @@ def get_chat_model(
             model=model,
         ) from exc
 
-    logger.info("Chat model initialized provider=%s model=%s", model_provider, model)
+    logger.info(f"Chat model initialized provider={model_provider} model={model}")
     return chat_model
 
 
 if __name__ == "__main__":
     chat_model = get_chat_model(model="gpt-5.1", model_provider="openai")
     print(chat_model)
-    

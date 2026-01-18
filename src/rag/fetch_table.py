@@ -5,8 +5,8 @@ import os
 import fitz  # PyMuPDF
 from PIL import Image
 
-from ..common.logging import get_logger
-from .parser import load_json_from_file, parse_pdf
+from src.common.logging import get_logger
+from src.rag.parser import load_json_from_file, parse_pdf
 
 logger = get_logger(__name__)
 
@@ -117,7 +117,7 @@ def extract_tables_as_images(
     for f in stale:
         os.remove(os.path.join(output_dir, f))
     if stale:
-        logger.debug("Removed %d stale table image(s) from %s", len(stale), output_dir)
+        logger.debug(f"Removed {len(stale)} stale table image(s) from {output_dir}")
 
     json_path, md_path = parse_pdf(pdf_path, parsed_dir)
     data = load_json_from_file(json_path)
@@ -126,7 +126,7 @@ def extract_tables_as_images(
     table_metadata = []
 
     fitz_doc = fitz.open(pdf_path)
-    logger.info("Extracting tables from: %s", pdf_path)
+    logger.info(f"Extracting tables from: {pdf_path}")
 
     try:
         state = {
@@ -151,7 +151,7 @@ def extract_tables_as_images(
 
             pages = active["all_pages"]
             span  = f"p{pages[0]}" if len(pages) == 1 else f"p{pages[0]}-{pages[-1]}"
-            logger.info("Saved table image: %s (%s, %d page(s))", active["image_path"], span, len(pages))
+            logger.info(f"Saved table image: {active['image_path']} ({span}, {len(pages)} page(s))")
 
             table_metadata.append({
                 "table_id":   active["table_count"],
@@ -180,7 +180,7 @@ def extract_tables_as_images(
                 table_rect = pdf_bbox_to_fitz_rect(page, table_bbox) & page.rect
 
                 if table_rect.is_empty or table_rect.width < 10 or table_rect.height < 10:
-                    logger.debug("Skipping degenerate table rect on page %d", table_page)
+                    logger.debug(f"Skipping degenerate table rect on page {table_page}")
                     return
 
                 is_continuation = (
@@ -199,7 +199,7 @@ def extract_tables_as_images(
                     active["first_page"]  = table_page
                     active["image_path"]  = os.path.join(
                         output_dir, f"table_p{table_page}_{table_count}.png")
-                    logger.debug("New table #%d on page %d", table_count, table_page)
+                    logger.debug(f"New table #{table_count} on page {table_page}")
 
                     ctx_rect = _same_page_context_rect(page, table_rect)
                     crop = (
@@ -210,7 +210,7 @@ def extract_tables_as_images(
                     img = _pix_to_pil(page.get_pixmap(clip=crop, dpi=200))
 
                 else:
-                    logger.debug("Continuation of table #%d on page %d", active["table_count"], table_page)
+                    logger.debug(f"Continuation of table #{active['table_count']} on page {table_page}")
                     img = _pix_to_pil(page.get_pixmap(clip=table_rect, dpi=200))
 
                 active["parts"].append(img)
@@ -218,7 +218,7 @@ def extract_tables_as_images(
                 state["last_table_page"] = table_page
 
             except Exception as e:
-                logger.error("Error processing table on page %d: %s", table_page, e)
+                logger.error(f"Error processing table on page {table_page}: {e}")
 
         def traverse(node):
             if isinstance(node, dict):
@@ -248,9 +248,9 @@ def extract_tables_as_images(
     if metadata_path:
         with open(metadata_path, "w", encoding="utf-8") as f:
             json.dump(table_metadata, f, indent=2)
-        logger.info("Metadata saved to %s", metadata_path)
+        logger.info(f"Metadata saved to {metadata_path}")
 
-    logger.info("Total logical tables saved: %d", table_count)
+    logger.info(f"Total logical tables saved: {table_count}")
     return table_metadata, md_path
 
 
@@ -263,6 +263,7 @@ def extract_tables_from_folder(
     output_dir: str,
     parsed_dir: str,
     metadata_path: str | None = None,
+    skip_files: set[str] | None = None,
 ) -> list:
     """
     Process every PDF in *folder_path* and extract tables from each.
@@ -283,18 +284,23 @@ def extract_tables_from_folder(
     )
 
     if not pdf_files:
-        logger.warning("No PDF files found in: %s", folder_path)
+        logger.warning(f"No PDF files found in: {folder_path}")
         return []
 
-    logger.info("Found %d PDF(s) in %s", len(pdf_files), folder_path)
+    logger.info(f"Found {len(pdf_files)} PDF(s) in {folder_path}")
 
     combined_metadata = []
 
     for pdf_path in pdf_files:
-        stem       = os.path.splitext(os.path.basename(pdf_path))[0]
+        pdf_name   = os.path.basename(pdf_path)
+        stem       = os.path.splitext(pdf_name)[0]
         pdf_outdir = os.path.join(output_dir, stem)
 
-        logger.info("Processing: %s", os.path.basename(pdf_path))
+        if skip_files and pdf_name in skip_files:
+            logger.info("Skipping unchanged (registry): %s", pdf_name)
+            continue
+
+        logger.info(f"Processing: {pdf_name}")
         per_file_meta, _ = extract_tables_as_images(pdf_path, pdf_outdir, parsed_dir)
 
         for entry in per_file_meta:
@@ -302,13 +308,13 @@ def extract_tables_from_folder(
 
         combined_metadata.extend(per_file_meta)
 
-    logger.info("Grand total logical tables: %d", len(combined_metadata))
+    logger.info(f"Grand total logical tables: {len(combined_metadata)}")
 
     if metadata_path:
         os.makedirs(os.path.dirname(metadata_path) or ".", exist_ok=True)
         with open(metadata_path, "w", encoding="utf-8") as f:
             json.dump(combined_metadata, f, indent=2)
-        logger.info("Combined metadata saved to %s", metadata_path)
+        logger.info(f"Combined metadata saved to {metadata_path}")
 
     return combined_metadata
 

@@ -4,8 +4,8 @@ from collections import defaultdict
 
 import opendataloader_pdf
 
-from ..common.logging import get_logger
-from ..config.constants import MD_PAGE_SEPARATOR
+from src.common.logging import get_logger
+from src.config.constants import MD_PAGE_SEPARATOR
 
 logger = get_logger(__name__)
 
@@ -21,14 +21,18 @@ def parse_pdf(pdf_path: str, parsed_dir: str) -> tuple[str, str]:
     out_dir = os.path.join(parsed_dir, stem)
     os.makedirs(out_dir, exist_ok=True)
 
-    logger.info("Parsing PDF: %s", pdf_path)
-    opendataloader_pdf.convert(
-        input_path=pdf_path,
-        output_dir=out_dir,
-        format=["json", "markdown"],
-        markdown_page_separator=MD_PAGE_SEPARATOR,
-        quiet=True,
-    )
+    logger.info(f"Parsing PDF: {pdf_path}")
+    try:
+        opendataloader_pdf.convert(
+            input_path=pdf_path,
+            output_dir=out_dir,
+            format=["json", "markdown"],
+            markdown_page_separator=MD_PAGE_SEPARATOR,
+            quiet=True,
+        )
+    except Exception as e:
+        logger.error(f"PDF conversion failed for {pdf_path}: {e}")
+        raise
 
     json_path = os.path.join(out_dir, stem + ".json")
     md_path   = os.path.join(out_dir, stem + ".md")
@@ -38,7 +42,7 @@ def parse_pdf(pdf_path: str, parsed_dir: str) -> tuple[str, str]:
     if not os.path.exists(md_path):
         raise RuntimeError(f"Expected markdown output not found: {md_path}")
 
-    logger.info("Parsed %s.json + %s.md -> %s", stem, stem, out_dir)
+    logger.info(f"Parsed {stem}.json + {stem}.md -> {out_dir}")
     return json_path, md_path
 
 
@@ -51,8 +55,12 @@ def load_json_from_file(json_path: str) -> list:
     element carries its own "page number" field.  We group by page here so the
     rest of the pipeline is unchanged.
     """
-    with open(json_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
+    try:
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        logger.error(f"Failed to load JSON from {json_path}: {e}")
+        raise
 
     pages_map: dict = defaultdict(list)
     for element in data.get("kids", []):
@@ -63,5 +71,5 @@ def load_json_from_file(json_path: str) -> list:
         for pnum, kids in sorted(pages_map.items())
     ]
 
-    logger.info("Loaded %d page(s) from %s", len(pages), json_path)
+    logger.info(f"Loaded {len(pages)} page(s) from {json_path}")
     return pages
