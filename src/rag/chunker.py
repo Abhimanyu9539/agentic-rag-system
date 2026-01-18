@@ -6,7 +6,7 @@ from langchain_core.documents import Document
 from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
 
 from src.common.logging import get_logger
-from src.config.constants import ODL_PAGE_PATTERN as _ODL_PAGE_PATTERN, SENTINEL_RE as _SENTINEL_RE
+from src.config.constants import CHUNK_OVERLAP, CHUNK_SIZE, ODL_PAGE_PATTERN, SENTINEL_RE
 
 logger = get_logger(__name__)
 
@@ -23,7 +23,7 @@ def load_markdown_with_page_markers(md_path: str) -> str:
         logger.error(f"Failed to read markdown file {md_path}: {e}")
         raise
     logger.debug(f"Loaded markdown from {md_path}")
-    return _ODL_PAGE_PATTERN.sub(lambda m: f"<!-- page:{m.group(1)} -->", content)
+    return ODL_PAGE_PATTERN.sub(lambda m: f"<!-- page:{m.group(1)} -->", content)
 
 
 # ---------------------------------------------------------------------------
@@ -50,8 +50,8 @@ def split_by_headers(markdown: str) -> list[Document]:
 
 def split_chunks(
     header_docs: list[Document],
-    chunk_size: int = 1000,
-    chunk_overlap: int = 150,
+    chunk_size: int = CHUNK_SIZE,
+    chunk_overlap: int = CHUNK_OVERLAP,
 ) -> list[Document]:
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
@@ -73,7 +73,7 @@ def split_chunks(
 
 def _extract_pages(chunk_text: str, last_page: int = 1) -> list[int]:
     """Return sorted, deduplicated page numbers from sentinels in chunk_text."""
-    found = [int(m) for m in _SENTINEL_RE.findall(chunk_text)]
+    found = [int(m) for m in SENTINEL_RE.findall(chunk_text)]
     return sorted(set(found)) if found else [last_page]
 
 
@@ -145,8 +145,8 @@ def chunk_pdf(
     md_path: str,
     table_metadata: list[dict],
     source_pdf: str,
-    chunk_size: int = 1000,
-    chunk_overlap: int = 150,
+    chunk_size: int = CHUNK_SIZE,
+    chunk_overlap: int = CHUNK_OVERLAP,
 ) -> list[Document]:
     logger.info(f"Chunking {source_pdf} (chunk_size={chunk_size}, overlap={chunk_overlap})")
     try:

@@ -3,6 +3,7 @@ from pathlib import Path
 from langchain_pinecone import PineconeVectorStore
 
 from src.common.logging import get_logger
+from src.config.constants import EMBEDDING_MODEL, EMBEDDING_PROVIDER
 from src.db.pinecone_client import delete_vectors_by_filter, get_pinecone_index
 from src.db.supabase_client import (
     get_all_active_files,
@@ -16,14 +17,23 @@ from src.rag.ingestor import embed_and_upsert, file_hash, load_chunks_from_json
 logger = get_logger(__name__)
 
 
-def _pdf_hash(chunk_path: Path, raw_dir: str) -> str:
+def pdf_hash(pdf_name: str, raw_dir: str, chunk_path: Path | None = None) -> str:
     """Hash the source PDF. Falls back to the chunk file if the PDF is missing."""
-    source_pdf = chunk_path.stem.replace("_chunks", "") + ".pdf"
-    pdf_path = Path(raw_dir) / source_pdf
+    pdf_path = Path(raw_dir) / pdf_name
     if pdf_path.exists():
         return file_hash(str(pdf_path))
-    logger.warning(f"Source PDF not found for {chunk_path.name} - hashing chunk file instead")
-    return file_hash(str(chunk_path))
+    if chunk_path is not None:
+        logger.warning(f"Source PDF not found for {pdf_name} - hashing chunk file instead")
+        return file_hash(str(chunk_path))
+    raise FileNotFoundError(f"PDF not found: {pdf_path}")
+
+
+def is_pdf_unchanged(pdf_name: str, raw_dir: str) -> bool:
+    """True if the registry has an active entry whose hash matches the PDF on disk."""
+    entry = get_registry_entry(pdf_name)
+    if not entry or entry.get("status") != "active":
+        return False
+    return entry.get("file_hash") == pdf_hash(pdf_name, raw_dir)
 
 
 def sync_folder(chunks_dir: str, raw_dir: str, index_name: str, namespace: str = "") -> dict:
@@ -45,7 +55,7 @@ def sync_folder(chunks_dir: str, raw_dir: str, index_name: str, namespace: str =
         return {"new": 0, "changed": 0, "unchanged": 0, "deleted": 0, "errors": 0}
 
     index = get_pinecone_index(index_name)
-    embeddings = get_embeddings_model(model="text-embedding-3-small", model_provider="openai")
+    embeddings = get_embeddings_model(model=EMBEDDING_MODEL, model_provider=EMBEDDING_PROVIDER)
     vectorstore = PineconeVectorStore(index=index, embedding=embeddings, namespace=namespace)
 
     active_registry = {e["file_name"]: e["file_hash"] for e in get_all_active_files()}
@@ -60,7 +70,7 @@ def sync_folder(chunks_dir: str, raw_dir: str, index_name: str, namespace: str =
 
         source_pdf = chunks[0].metadata.get("source_pdf", path.stem.replace("_chunks", "") + ".pdf")
         processed.add(source_pdf)
-        current_hash = _pdf_hash(path, raw_dir)
+        current_hash = pdf_hash(source_pdf, raw_dir, chunk_path=path)
 
         entry = get_registry_entry(source_pdf)
         status = entry.get("status") if entry else None

@@ -4,12 +4,10 @@ from typing import Any
 from pinecone import Pinecone, ServerlessSpec
 
 from src.common.logging import get_logger
-from src.config.constants import _BATCH_SIZE
+from src.config.constants import BATCH_SIZE, EMBEDDING_DIMENSION, PINECONE_METRIC
 
 logger = get_logger(__name__)
 
-_DEFAULT_DIMENSION = 1536
-_DEFAULT_METRIC = "cosine"
 _DEFAULT_CLOUD = os.getenv("PINECONE_CLOUD", "aws")
 _DEFAULT_REGION = os.getenv("PINECONE_REGION", "us-east-1")
 
@@ -30,8 +28,8 @@ def get_pinecone_client() -> Pinecone:
 
 def ensure_index(
     index_name: str,
-    dimension: int = _DEFAULT_DIMENSION,
-    metric: str = _DEFAULT_METRIC,
+    dimension: int = EMBEDDING_DIMENSION,
+    metric: str = PINECONE_METRIC,
 ) -> None:
     if index_name in _ensured_indexes:
         return
@@ -64,7 +62,7 @@ def upsert_vectors(
     vectors: list[dict[str, Any]],
     index_name: str,
     namespace: str = "",
-    batch_size: int = _BATCH_SIZE,
+    batch_size: int = BATCH_SIZE,
 ) -> int:
     index = get_pinecone_index(index_name)
     upserted = 0

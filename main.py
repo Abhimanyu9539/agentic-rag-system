@@ -4,11 +4,10 @@ from collections import defaultdict
 from dotenv import load_dotenv
 
 from src.common.logging import get_logger
+from src.config.constants import DEFAULT_PINECONE_INDEX
 from src.rag.fetch_table import extract_tables_from_folder
 from src.rag.chunker import chunk_pdf, save_chunks
-from src.rag.ingestor import file_hash
-from src.rag.sync import sync_folder
-from src.db.supabase_client import get_registry_entry
+from src.rag.sync import is_pdf_unchanged, sync_folder
 
 load_dotenv()
 logger = get_logger(__name__)
@@ -25,16 +24,13 @@ def main():
     logger.info("=== Agentic RAG Pipeline Start ===")
 
     # Pre-compute unchanged PDFs to skip parse+chunk entirely
-    skip_pdfs: set[str] = set()
-    for pdf_name in os.listdir(RAW_DIR):
-        if not pdf_name.lower().endswith(".pdf"):
-            continue
-        entry = get_registry_entry(pdf_name)
-        if entry and entry.get("status") == "active":
-            if entry.get("file_hash") == file_hash(os.path.join(RAW_DIR, pdf_name)):
-                skip_pdfs.add(pdf_name)
+    skip_pdfs = {
+        pdf_name
+        for pdf_name in os.listdir(RAW_DIR)
+        if pdf_name.lower().endswith(".pdf") and is_pdf_unchanged(pdf_name, RAW_DIR)
+    }
     if skip_pdfs:
-        logger.info("Skipping %d unchanged PDF(s): %s", len(skip_pdfs), sorted(skip_pdfs))
+        logger.info(f"Skipping {len(skip_pdfs)} unchanged PDF(s): {sorted(skip_pdfs)}")
 
     # Step 1: Extract tables and parse PDFs
     logger.info("Step 1: Extracting tables and parsing PDFs from %s", RAW_DIR)
@@ -84,7 +80,7 @@ def main():
         summary = sync_folder(
             chunks_dir=CHUNKS_DIR,
             raw_dir=RAW_DIR,
-            index_name=os.getenv("PINECONE_INDEX_NAME", "agentic-rag"),
+            index_name=os.getenv("PINECONE_INDEX_NAME", DEFAULT_PINECONE_INDEX),
         )
     except Exception as e:
         logger.error(f"Step 3 failed — sync aborted: {e}")
