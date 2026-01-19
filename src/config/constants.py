@@ -31,7 +31,7 @@ EMBEDDING_DIMENSION = 1536
 # Pinecone recommends <=100 vectors per upsert.
 BATCH_SIZE = 100
 PINECONE_METRIC = "cosine"
-DEFAULT_PINECONE_INDEX = "agentic-rag"
+DEFAULT_PINECONE_INDEX = "agentic-rag-system"
 
 # ---------------------------------------------------------------------------
 # Supabase

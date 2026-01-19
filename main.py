@@ -4,7 +4,6 @@ from collections import defaultdict
 from dotenv import load_dotenv
 
 from src.common.logging import get_logger
-from src.config.constants import DEFAULT_PINECONE_INDEX
 from src.rag.fetch_table import extract_tables_from_folder
 from src.rag.chunker import chunk_pdf, save_chunks
 from src.rag.sync import is_pdf_unchanged, sync_folder
@@ -77,11 +76,7 @@ def main():
     # Step 3: Sync chunks into Pinecone via registry
     logger.info("Step 3: Syncing chunks to Pinecone")
     try:
-        summary = sync_folder(
-            chunks_dir=CHUNKS_DIR,
-            raw_dir=RAW_DIR,
-            index_name=os.getenv("PINECONE_INDEX_NAME", DEFAULT_PINECONE_INDEX),
-        )
+        summary = sync_folder(chunks_dir=CHUNKS_DIR, raw_dir=RAW_DIR)
     except Exception as e:
         logger.error(f"Step 3 failed — sync aborted: {e}")
         raise

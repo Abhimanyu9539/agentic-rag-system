@@ -4,7 +4,7 @@ from typing import Any
 from pinecone import Pinecone, ServerlessSpec
 
 from src.common.logging import get_logger
-from src.config.constants import BATCH_SIZE, EMBEDDING_DIMENSION, PINECONE_METRIC
+from src.config.constants import BATCH_SIZE, DEFAULT_PINECONE_INDEX, EMBEDDING_DIMENSION, PINECONE_METRIC
 
 logger = get_logger(__name__)
 
@@ -53,14 +53,14 @@ def ensure_index(
         raise
 
 
-def get_pinecone_index(index_name: str):
+def get_pinecone_index(index_name: str = DEFAULT_PINECONE_INDEX):
     ensure_index(index_name)
     return get_pinecone_client().Index(index_name)
 
 
 def upsert_vectors(
     vectors: list[dict[str, Any]],
-    index_name: str,
+    index_name: str = DEFAULT_PINECONE_INDEX,
     namespace: str = "",
     batch_size: int = BATCH_SIZE,
 ) -> int:
@@ -73,14 +73,14 @@ def upsert_vectors(
             upserted += len(batch)
             logger.info(f"Upserted batch of {len(batch)} vectors to '{index_name}'")
         except Exception as e:
-            logger.error(f"Failed to upsert batch {i}–{i + len(batch)} to '{index_name}': {e}")
+            logger.error(f"Failed to upsert batch {i} through {i + len(batch)} to '{index_name}': {e}")
             raise
     return upserted
 
 
 def delete_vectors_by_filter(
     filter_dict: dict,
-    index_name: str,
+    index_name: str = DEFAULT_PINECONE_INDEX,
     namespace: str = "",
 ) -> None:
     try:

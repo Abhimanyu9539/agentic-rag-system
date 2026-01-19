@@ -6,7 +6,9 @@ from langchain_core.documents import Document
 from langchain_pinecone import PineconeVectorStore
 
 from src.common.logging import get_logger
-from src.config.constants import BATCH_SIZE
+from src.config.constants import BATCH_SIZE, DEFAULT_PINECONE_INDEX, EMBEDDING_MODEL, EMBEDDING_PROVIDER
+from src.db.pinecone_client import get_pinecone_index
+from src.llm_adapters.embeddings.base import get_embeddings_model
 
 logger = get_logger(__name__)
 
@@ -52,3 +54,18 @@ def embed_and_upsert(
 
     logger.info(f"Upserted {len(chunks)} chunks total")
     return len(chunks)
+
+
+def embed_and_upsert_chunks(
+    chunks: list[Document],
+    fhash: str,
+    index_name: str = DEFAULT_PINECONE_INDEX,
+    namespace: str = "",
+) -> int:
+    """Build vectorstore internally and embed chunks. Returns vector count."""
+    embeddings = get_embeddings_model(model=EMBEDDING_MODEL, model_provider=EMBEDDING_PROVIDER)
+    vectorstore = PineconeVectorStore(
+        index=get_pinecone_index(index_name), embedding=embeddings, namespace=namespace
+    )
+    vector_count = embed_and_upsert(chunks, vectorstore=vectorstore, fhash=fhash)
+    return vector_count
