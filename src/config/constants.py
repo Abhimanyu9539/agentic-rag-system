@@ -1,3 +1,4 @@
+import os
 import re
 
 # ---------------------------------------------------------------------------
@@ -37,3 +38,10 @@ DEFAULT_PINECONE_INDEX = "agentic-rag-system"
 # Supabase
 # ---------------------------------------------------------------------------
 SUPABASE_FILE_REGISTRY_TABLE = "file_registry"
+
+# ---------------------------------------------------------------------------
+# Debug
+# ---------------------------------------------------------------------------
+# Set DEBUG_SAVE_PARSED=true to keep parsed JSON/markdown files on disk
+# after processing. Off by default; files are cleaned up immediately after reading.
+DEBUG_SAVE_PARSED = "true"

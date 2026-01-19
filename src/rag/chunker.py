@@ -12,22 +12,7 @@ logger = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Step 1 — Load markdown with page markers
-# ---------------------------------------------------------------------------
-
-def load_markdown_with_page_markers(md_path: str) -> str:
-    try:
-        with open(md_path, "r", encoding="utf-8") as f:
-            content = f.read()
-    except Exception as e:
-        logger.error(f"Failed to read markdown file {md_path}: {e}")
-        raise
-    logger.debug(f"Loaded markdown from {md_path}")
-    return ODL_PAGE_PATTERN.sub(lambda m: f"<!-- page:{m.group(1)} -->", content)
-
-
-# ---------------------------------------------------------------------------
-# Step 2 — Header-aware split
+# Step 1 — Header-aware split
 # ---------------------------------------------------------------------------
 
 def split_by_headers(markdown: str) -> list[Document]:
@@ -45,7 +30,7 @@ def split_by_headers(markdown: str) -> list[Document]:
 
 
 # ---------------------------------------------------------------------------
-# Step 3 — Size-based split
+# Step 2 — Size-based split
 # ---------------------------------------------------------------------------
 
 def split_chunks(
@@ -68,7 +53,7 @@ def split_chunks(
 
 
 # ---------------------------------------------------------------------------
-# Step 4 — Page tracking helpers
+# Step 3 — Page tracking helpers
 # ---------------------------------------------------------------------------
 
 def _extract_pages(chunk_text: str, last_page: int = 1) -> list[int]:
@@ -82,7 +67,7 @@ def _strip_sentinels(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Step 5 — Table index
+# Step 4 — Table index
 # ---------------------------------------------------------------------------
 
 def build_page_table_index(table_metadata: list[dict]) -> dict[int, list[str]]:
@@ -96,7 +81,7 @@ def build_page_table_index(table_metadata: list[dict]) -> dict[int, list[str]]:
 
 
 # ---------------------------------------------------------------------------
-# Step 6 — Associate tables + finalise metadata
+# Step 5 — Associate tables + finalise metadata
 # ---------------------------------------------------------------------------
 
 def associate_tables(
@@ -142,7 +127,7 @@ def associate_tables(
 # ---------------------------------------------------------------------------
 
 def chunk_pdf(
-    md_path: str,
+    markdown: str,
     table_metadata: list[dict],
     source_pdf: str,
     chunk_size: int = CHUNK_SIZE,
@@ -150,8 +135,8 @@ def chunk_pdf(
 ) -> list[Document]:
     logger.info(f"Chunking {source_pdf} (chunk_size={chunk_size}, overlap={chunk_overlap})")
     try:
-        markdown    = load_markdown_with_page_markers(md_path)
-        header_docs = split_by_headers(markdown)
+        processed   = ODL_PAGE_PATTERN.sub(lambda m: f"<!-- page:{m.group(1)} -->", markdown)
+        header_docs = split_by_headers(processed)
         chunks      = split_chunks(header_docs, chunk_size, chunk_overlap)
         page_index  = build_page_table_index(table_metadata)
         result      = associate_tables(chunks, page_index, source_pdf)
@@ -163,6 +148,7 @@ def chunk_pdf(
 
 
 def save_chunks(chunks: list[Document], output_path: str) -> None:
+    """Persist chunks to JSON. Available for debug/standalone use."""
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     payload = [{"text": c.page_content, "metadata": c.metadata} for c in chunks]
     try:
@@ -172,32 +158,3 @@ def save_chunks(chunks: list[Document], output_path: str) -> None:
         logger.error(f"Failed to save chunks to {output_path}: {e}")
         raise
     logger.info(f"{len(chunks)} chunk(s) saved -> {output_path}")
-
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    from collections import defaultdict as _dd
-
-    parsed_dir    = r"E:\LLMOps\agentic-rag-system\data\output\parsed"
-    metadata_path = r"E:\LLMOps\agentic-rag-system\data\output\tables\table_metadata.json"
-    chunks_dir    = r"E:\LLMOps\agentic-rag-system\data\output\chunks"
-
-    with open(metadata_path, "r", encoding="utf-8") as f:
-        all_meta = json.load(f)
-
-    by_pdf: dict = _dd(list)
-    for entry in all_meta:
-        by_pdf[entry["source_pdf"]].append(entry)
-
-    for source_pdf, table_meta in by_pdf.items():
-        stem    = os.path.splitext(source_pdf)[0]
-        md_path = os.path.join(parsed_dir, stem, stem + ".md")
-        if not os.path.exists(md_path):
-            logger.warning(f"Markdown not found for {source_pdf}, skipping")
-            continue
-
-        chunks = chunk_pdf(md_path, table_meta, source_pdf)
-        save_chunks(chunks, os.path.join(chunks_dir, stem + "_chunks.json"))

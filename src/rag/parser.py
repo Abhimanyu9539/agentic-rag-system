@@ -1,21 +1,23 @@
 import json
 import os
+import shutil
 from collections import defaultdict
 
 import opendataloader_pdf
 
 from src.common.logging import get_logger
-from src.config.constants import MD_PAGE_SEPARATOR
+from src.config.constants import DEBUG_SAVE_PARSED, MD_PAGE_SEPARATOR
 
 logger = get_logger(__name__)
 
 
-def parse_pdf(pdf_path: str, parsed_dir: str) -> tuple[str, str]:
+def parse_pdf(pdf_path: str, parsed_dir: str) -> tuple[list, str]:
     """
-    Convert a PDF to both JSON and markdown using a single JVM call.
+    Convert a PDF to JSON and markdown using a single JVM call.
 
-    Outputs are written to *parsed_dir/{stem}/* so you can inspect them.
-    Returns (json_path, md_path).
+    Returns (parsed_data, markdown_str) in memory.
+    Files are written to parsed_dir/{stem}/ as a JVM requirement.
+    If DEBUG_SAVE_PARSED is True they are kept for inspection; otherwise deleted.
     """
     stem    = os.path.splitext(os.path.basename(pdf_path))[0]
     out_dir = os.path.join(parsed_dir, stem)
@@ -42,18 +44,23 @@ def parse_pdf(pdf_path: str, parsed_dir: str) -> tuple[str, str]:
     if not os.path.exists(md_path):
         raise RuntimeError(f"Expected markdown output not found: {md_path}")
 
-    logger.info(f"Parsed {stem}.json + {stem}.md -> {out_dir}")
-    return json_path, md_path
+    parsed_data = load_json_from_file(json_path)
+    with open(md_path, "r", encoding="utf-8") as f:
+        markdown = f.read()
+
+    if DEBUG_SAVE_PARSED:
+        logger.debug(f"Debug: parsed files kept in {out_dir}")
+    else:
+        shutil.rmtree(out_dir, ignore_errors=True)
+        logger.debug(f"Cleaned up parsed output for {stem}")
+
+    return parsed_data, markdown
 
 
 def load_json_from_file(json_path: str) -> list:
     """
     Read the JSON file produced by parse_pdf and return a list of per-page dicts
     [{"page number": N, "kids": [...]}, ...].
-
-    The raw JSON file has a flat {"kids": [all_elements]} structure where each
-    element carries its own "page number" field.  We group by page here so the
-    rest of the pipeline is unchanged.
     """
     try:
         with open(json_path, "r", encoding="utf-8") as f:

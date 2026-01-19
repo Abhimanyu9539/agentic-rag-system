@@ -87,12 +87,14 @@ def _merge_images(parts):
 def extract_tables_as_images(
     pdf_path: str,
     output_dir: str,
-    parsed_dir: str,
+    parsed_data: list,
     metadata_path: str | None = None,
-) -> tuple[list, str]:
+) -> list:
     """
-    Parse the PDF (JSON + markdown in one JVM call), extract all tables as PNG
-    images, and return (table_metadata, md_path).
+    Extract all tables from a PDF as PNG images and return their metadata.
+
+    parsed_data is the pre-loaded structured JSON (list of page dicts) returned
+    by parse_pdf().  output_dir receives the PNG files.
 
     Context strategy
     ----------------
@@ -118,9 +120,6 @@ def extract_tables_as_images(
         os.remove(os.path.join(output_dir, f))
     if stale:
         logger.debug(f"Removed {len(stale)} stale table image(s) from {output_dir}")
-
-    json_path, md_path = parse_pdf(pdf_path, parsed_dir)
-    data = load_json_from_file(json_path)
 
     table_count    = 0
     table_metadata = []
@@ -239,7 +238,7 @@ def extract_tables_as_images(
                 for item in node:
                     traverse(item)
 
-        traverse(data)
+        traverse(parsed_data)
         _finalize_group()
 
     finally:
@@ -251,11 +250,11 @@ def extract_tables_as_images(
         logger.info(f"Metadata saved to {metadata_path}")
 
     logger.info(f"Total logical tables saved: {table_count}")
-    return table_metadata, md_path
+    return table_metadata
 
 
 # ---------------------------------------------------------------------------
-# Folder-level extraction
+# Folder-level extraction (standalone / debug use)
 # ---------------------------------------------------------------------------
 
 def extract_tables_from_folder(
@@ -266,16 +265,10 @@ def extract_tables_from_folder(
     skip_files: set[str] | None = None,
 ) -> list:
     """
-    Process every PDF in *folder_path* and extract tables from each.
+    Process every PDF in folder_path and extract tables from each.
 
-    Each PDF gets:
-    - Its own sub-directory in *output_dir* for table PNG images
-    - Its own sub-directory in *parsed_dir* for the .json and .md parse outputs
-
-    All per-file metadata is merged into a single list; each entry gains a
-    ``source_pdf`` key with the file name.
-
-    Returns the combined metadata list.
+    Intended for standalone / debug runs. The main pipeline uses
+    extract_tables_as_images() per file with data already in memory.
     """
     pdf_files = sorted(
         os.path.join(folder_path, f)
@@ -301,10 +294,11 @@ def extract_tables_from_folder(
             continue
 
         logger.info(f"Processing: {pdf_name}")
-        per_file_meta, _ = extract_tables_as_images(pdf_path, pdf_outdir, parsed_dir)
+        parsed_data, _ = parse_pdf(pdf_path, parsed_dir)
+        per_file_meta  = extract_tables_as_images(pdf_path, pdf_outdir, parsed_data)
 
         for entry in per_file_meta:
-            entry["source_pdf"] = os.path.basename(pdf_path)
+            entry["source_pdf"] = pdf_name
 
         combined_metadata.extend(per_file_meta)
 
