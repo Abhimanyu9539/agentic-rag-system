@@ -1,8 +1,8 @@
 from pathlib import Path
 
 from src.common.logging import get_logger
-from src.db.pinecone_client import delete_vectors_by_filter
-from src.db.supabase_client import (
+from src.db_clients.pinecone_client import delete_vectors_by_filter
+from src.db_clients.supabase_client import (
     get_all_active_files,
     get_registry_entry,
     mark_file_inactive,

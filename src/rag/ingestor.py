@@ -7,7 +7,7 @@ from langchain_pinecone import PineconeVectorStore
 
 from src.common.logging import get_logger
 from src.config.constants import BATCH_SIZE, DEFAULT_PINECONE_INDEX, EMBEDDING_MODEL, EMBEDDING_PROVIDER
-from src.db.pinecone_client import get_pinecone_index
+from src.db_clients.pinecone_client import get_pinecone_index
 from src.llm_adapters.embeddings.base import get_embeddings_model
 
 logger = get_logger(__name__)
