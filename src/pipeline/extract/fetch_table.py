@@ -6,7 +6,12 @@ import fitz  # PyMuPDF
 from PIL import Image
 
 from src.common.logging import get_logger
-from src.rag.parser import load_json_from_file, parse_pdf
+from src.config.constants import DEBUG_SAVE_IMAGES
+from src.db_clients.supabase_client import (
+    insert_image_registry_entry,
+    upload_image_to_storage,
+)
+from src.pipeline.extract.parser import parse_pdf
 
 logger = get_logger(__name__)
 
@@ -86,15 +91,22 @@ def _merge_images(parts):
 
 def extract_tables_as_images(
     pdf_path: str,
-    output_dir: str,
     parsed_data: list,
+    pdf_name: str | None = None,
+    local_dir: str | None = None,
     metadata_path: str | None = None,
 ) -> list:
     """
-    Extract all tables from a PDF as PNG images and return their metadata.
+    Extract all tables from a PDF as PNG images, upload them to Supabase Storage,
+    and register each one in image_registry. Returns metadata whose `image_path`
+    holds the public URL (used downstream by the chunker).
 
-    parsed_data is the pre-loaded structured JSON (list of page dicts) returned
-    by parse_pdf().  output_dir receives the PNG files.
+    Caller must ensure a `file_registry` row already exists for `pdf_name`
+    (status=in-progress) before invoking this function — image_registry rows
+    have a foreign key on file_registry.file_name.
+
+    Local PNGs are skipped unless DEBUG_SAVE_IMAGES is "true" and `local_dir`
+    is provided.
 
     Context strategy
     ----------------
@@ -113,13 +125,17 @@ def extract_tables_as_images(
       3. The previous table was on page N-1                        → consecutive
          pages with no gap.
     """
-    os.makedirs(output_dir, exist_ok=True)
+    pdf_name = pdf_name or os.path.basename(pdf_path)
+    stem     = os.path.splitext(pdf_name)[0]
 
-    stale = [f for f in os.listdir(output_dir) if f.startswith("table_") and f.endswith(".png")]
-    for f in stale:
-        os.remove(os.path.join(output_dir, f))
-    if stale:
-        logger.debug(f"Removed {len(stale)} stale table image(s) from {output_dir}")
+    save_local = DEBUG_SAVE_IMAGES.lower() == "true" and local_dir is not None
+    if save_local:
+        os.makedirs(local_dir, exist_ok=True)
+        stale = [f for f in os.listdir(local_dir) if f.startswith("table_") and f.endswith(".png")]
+        for f in stale:
+            os.remove(os.path.join(local_dir, f))
+        if stale:
+            logger.debug(f"Removed {len(stale)} stale table image(s) from {local_dir}")
 
     table_count    = 0
     table_metadata = []
@@ -134,11 +150,12 @@ def extract_tables_as_images(
         }
 
         active = {
-            "table_count": None,
-            "first_page":  None,
-            "all_pages":   [],
-            "image_path":  None,
-            "parts":       [],
+            "table_count":  None,
+            "first_page":   None,
+            "all_pages":    [],
+            "image_name":   None,
+            "storage_path": None,
+            "parts":        [],
         }
 
         def _finalize_group():
@@ -146,23 +163,45 @@ def extract_tables_as_images(
                 return
 
             merged = _merge_images(active["parts"])
-            merged.save(active["image_path"])
+
+            buf = io.BytesIO()
+            merged.save(buf, format="PNG")
+            img_bytes = buf.getvalue()
+
+            public_url = upload_image_to_storage(img_bytes, active["storage_path"])
+
+            insert_image_registry_entry({
+                "file_name":    pdf_name,
+                "image_name":   active["image_name"],
+                "storage_path": active["storage_path"],
+                "public_url":   public_url,
+                "page":         active["first_page"],
+                "table_id":     active["table_count"],
+            })
+
+            if save_local:
+                local_path = os.path.join(local_dir, active["image_name"])
+                merged.save(local_path)
+                logger.debug(f"Saved local debug copy: {local_path}")
 
             pages = active["all_pages"]
             span  = f"p{pages[0]}" if len(pages) == 1 else f"p{pages[0]}-{pages[-1]}"
-            logger.info(f"Saved table image: {active['image_path']} ({span}, {len(pages)} page(s))")
+            logger.info(f"Uploaded table image: {active['storage_path']} ({span}, {len(pages)} page(s))")
 
             table_metadata.append({
-                "table_id":   active["table_count"],
-                "pages":      list(pages),
-                "image_path": active["image_path"],
+                "table_id":     active["table_count"],
+                "pages":        list(pages),
+                "image_path":   public_url,
+                "storage_path": active["storage_path"],
+                "image_name":   active["image_name"],
             })
 
-            active["parts"]       = []
-            active["all_pages"]   = []
-            active["image_path"]  = None
-            active["first_page"]  = None
-            active["table_count"] = None
+            active["parts"]        = []
+            active["all_pages"]    = []
+            active["image_name"]   = None
+            active["storage_path"] = None
+            active["first_page"]   = None
+            active["table_count"]  = None
 
         def _process_table(node):
             nonlocal table_count
@@ -194,10 +233,11 @@ def extract_tables_as_images(
                 if not is_continuation:
                     _finalize_group()
                     table_count += 1
-                    active["table_count"] = table_count
-                    active["first_page"]  = table_page
-                    active["image_path"]  = os.path.join(
-                        output_dir, f"table_p{table_page}_{table_count}.png")
+                    image_name = f"table_p{table_page}_{table_count}.png"
+                    active["table_count"]  = table_count
+                    active["first_page"]   = table_page
+                    active["image_name"]   = image_name
+                    active["storage_path"] = f"{stem}/{image_name}"
                     logger.debug(f"New table #{table_count} on page {table_page}")
 
                     ctx_rect = _same_page_context_rect(page, table_rect)
@@ -295,7 +335,9 @@ def extract_tables_from_folder(
 
         logger.info(f"Processing: {pdf_name}")
         parsed_data, _ = parse_pdf(pdf_path, parsed_dir)
-        per_file_meta  = extract_tables_as_images(pdf_path, pdf_outdir, parsed_data)
+        per_file_meta  = extract_tables_as_images(
+            pdf_path, parsed_data, pdf_name=pdf_name, local_dir=pdf_outdir
+        )
 
         for entry in per_file_meta:
             entry["source_pdf"] = pdf_name

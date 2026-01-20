@@ -37,7 +37,9 @@ DEFAULT_PINECONE_INDEX = "agentic-rag-system"
 # ---------------------------------------------------------------------------
 # Supabase
 # ---------------------------------------------------------------------------
-SUPABASE_FILE_REGISTRY_TABLE = "file_registry"
+SUPABASE_FILE_REGISTRY_TABLE  = "file_registry"
+SUPABASE_IMAGE_REGISTRY_TABLE = "image_registry"
+SUPABASE_IMAGES_BUCKET        = "table-images"
 
 # ---------------------------------------------------------------------------
 # Debug
@@ -45,3 +47,7 @@ SUPABASE_FILE_REGISTRY_TABLE = "file_registry"
 # Set DEBUG_SAVE_PARSED=true to keep parsed JSON/markdown files on disk
 # after processing. Off by default; files are cleaned up immediately after reading.
 DEBUG_SAVE_PARSED = "true"
+
+# Set DEBUG_SAVE_IMAGES=true to also keep extracted table PNGs on disk
+# in addition to uploading them to Supabase Storage. Off by default.
+DEBUG_SAVE_IMAGES = "false"
