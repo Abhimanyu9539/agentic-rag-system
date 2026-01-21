@@ -1,10 +1,10 @@
-import os
 from datetime import datetime, timezone
+from functools import lru_cache
 
-from dotenv import load_dotenv
 from supabase import Client, create_client
 
 from src.common.logging import get_logger
+from src.config import settings
 from src.config.constants import (
     SUPABASE_FILE_REGISTRY_TABLE,
     SUPABASE_IMAGE_REGISTRY_TABLE,
@@ -12,23 +12,15 @@ from src.config.constants import (
 )
 
 logger = get_logger(__name__)
-load_dotenv()
-_supabase: Client | None = None
 
 
+@lru_cache(maxsize=1)
 def get_supabase_client() -> Client:
-    global _supabase
-    if _supabase is None:
-        url = os.getenv("SUPABASE_URL")
-        key = os.getenv("SUPABASE_SERVICE_KEY")
-        if not url or not key:
-            raise RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_KEY must be set in environment")
-        try:
-            logger.info("Initializing Supabase client")
-            _supabase = create_client(url, key)
-        except Exception as e:
-            raise RuntimeError(f"Failed to create Supabase client: {e}") from e
-    return _supabase
+    try:
+        logger.info("Initializing Supabase client")
+        return create_client(settings.supabase_url, settings.supabase_service_key)
+    except Exception as e:
+        raise RuntimeError(f"Failed to create Supabase client: {e}") from e
 
 
 def get_registry_entry(file_name: str) -> dict | None:

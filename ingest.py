@@ -1,7 +1,5 @@
 import os
 
-from dotenv import load_dotenv
-
 from src.common.logging import get_logger
 from src.config.constants import DEBUG_SAVE_IMAGES
 from src.pipeline.extract.fetch_table import extract_tables_as_images
@@ -18,7 +16,6 @@ from src.pipeline.load.sync import (
 )
 from src.pipeline.transform.chunker import chunk_pdf
 
-load_dotenv()
 logger = get_logger(__name__)
 
 RAW_DIR    = os.path.join("data", "raw")
@@ -38,7 +35,7 @@ def main():
 
     summary = {"new": 0, "changed": 0, "unchanged": len(skip_pdfs), "deleted": 0, "errors": 0}
 
-    save_images_locally = DEBUG_SAVE_IMAGES.lower() == "true"
+    save_images_locally = DEBUG_SAVE_IMAGES
 
     for pdf_name in pdf_files:
         if pdf_name in skip_pdfs:

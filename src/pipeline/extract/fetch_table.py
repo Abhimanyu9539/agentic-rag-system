@@ -6,7 +6,16 @@ import fitz  # PyMuPDF
 from PIL import Image
 
 from src.common.logging import get_logger
-from src.config.constants import DEBUG_SAVE_IMAGES
+from src.config.constants import (
+    DEBUG_SAVE_IMAGES,
+    TABLE_CONTEXT_MAX_DISTANCE_PT,
+    TABLE_CONTEXT_NUM_BLOCKS,
+    TABLE_CONTEXT_Y_TOLERANCE_PT,
+    TABLE_MIN_DIMENSION_PT,
+    TABLE_PAGE_TOP_THRESHOLD_PT,
+    TABLE_RENDER_DPI,
+    TABLE_TEXT_BLOCK_MIN_Y_PT,
+)
 from src.db_clients.supabase_client import (
     insert_image_registry_entry,
     upload_image_to_storage,
@@ -37,7 +46,12 @@ def _pix_to_pil(pix):
 # Same-page context helper (PyMuPDF text blocks)
 # ---------------------------------------------------------------------------
 
-def _same_page_context_rect(page, table_rect, n_blocks=4, max_distance=250):
+def _same_page_context_rect(
+    page,
+    table_rect,
+    n_blocks: int = TABLE_CONTEXT_NUM_BLOCKS,
+    max_distance: float = TABLE_CONTEXT_MAX_DISTANCE_PT,
+):
     """
     Return a Rect extending table_rect upward to include the nearest
     n_blocks non-empty text blocks that sit above it on the same page
@@ -46,8 +60,8 @@ def _same_page_context_rect(page, table_rect, n_blocks=4, max_distance=250):
     above = [
         b for b in page.get_text("blocks")
         if b[4].strip()
-        and b[3] <= table_rect.y0 + 2
-        and b[1] > 15
+        and b[3] <= table_rect.y0 + TABLE_CONTEXT_Y_TOLERANCE_PT
+        and b[1] > TABLE_TEXT_BLOCK_MIN_Y_PT
         and (table_rect.y0 - b[3]) <= max_distance
     ]
     if not above:
@@ -105,7 +119,7 @@ def extract_tables_as_images(
     (status=in-progress) before invoking this function — image_registry rows
     have a foreign key on file_registry.file_name.
 
-    Local PNGs are skipped unless DEBUG_SAVE_IMAGES is "true" and `local_dir`
+    Local PNGs are skipped unless DEBUG_SAVE_IMAGES is True and `local_dir`
     is provided.
 
     Context strategy
@@ -128,7 +142,7 @@ def extract_tables_as_images(
     pdf_name = pdf_name or os.path.basename(pdf_path)
     stem     = os.path.splitext(pdf_name)[0]
 
-    save_local = DEBUG_SAVE_IMAGES.lower() == "true" and local_dir is not None
+    save_local = DEBUG_SAVE_IMAGES and local_dir is not None
     if save_local:
         os.makedirs(local_dir, exist_ok=True)
         stale = [f for f in os.listdir(local_dir) if f.startswith("table_") and f.endswith(".png")]
@@ -217,13 +231,17 @@ def extract_tables_as_images(
                 page       = fitz_doc[page_num]
                 table_rect = pdf_bbox_to_fitz_rect(page, table_bbox) & page.rect
 
-                if table_rect.is_empty or table_rect.width < 10 or table_rect.height < 10:
+                if (
+                    table_rect.is_empty
+                    or table_rect.width < TABLE_MIN_DIMENSION_PT
+                    or table_rect.height < TABLE_MIN_DIMENSION_PT
+                ):
                     logger.debug(f"Skipping degenerate table rect on page {table_page}")
                     return
 
                 is_continuation = (
                     active["parts"]
-                    and table_rect.y0 < 100
+                    and table_rect.y0 < TABLE_PAGE_TOP_THRESHOLD_PT
                     and state["heading_page"] is not None
                     and state["heading_page"] != table_page
                     and state["last_table_page"] is not None
@@ -246,11 +264,11 @@ def extract_tables_as_images(
                                   table_rect.x1, table_rect.y1) & page.rect
                         if ctx_rect else table_rect
                     )
-                    img = _pix_to_pil(page.get_pixmap(clip=crop, dpi=200))
+                    img = _pix_to_pil(page.get_pixmap(clip=crop, dpi=TABLE_RENDER_DPI))
 
                 else:
                     logger.debug(f"Continuation of table #{active['table_count']} on page {table_page}")
-                    img = _pix_to_pil(page.get_pixmap(clip=table_rect, dpi=200))
+                    img = _pix_to_pil(page.get_pixmap(clip=table_rect, dpi=TABLE_RENDER_DPI))
 
                 active["parts"].append(img)
                 active["all_pages"].append(table_page)

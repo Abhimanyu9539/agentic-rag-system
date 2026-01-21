@@ -1,38 +1,30 @@
-import os
+from functools import lru_cache
 from typing import Any
 
 from pinecone import Pinecone, ServerlessSpec
 
 from src.common.logging import get_logger
+from src.config import settings
 from src.config.constants import BATCH_SIZE, DEFAULT_PINECONE_INDEX, EMBEDDING_DIMENSION, PINECONE_METRIC
 
 logger = get_logger(__name__)
 
-_DEFAULT_CLOUD = os.getenv("PINECONE_CLOUD", "aws")
-_DEFAULT_REGION = os.getenv("PINECONE_REGION", "us-east-1")
 
-_pinecone: Pinecone | None = None
-_ensured_indexes: set[str] = set()
-
-
+@lru_cache(maxsize=1)
 def get_pinecone_client() -> Pinecone:
-    global _pinecone
-    if _pinecone is None:
-        try:
-            logger.info("Initializing Pinecone client")
-            _pinecone = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
-        except Exception as e:
-            raise RuntimeError(f"Failed to initialize Pinecone client: {e}") from e
-    return _pinecone
+    try:
+        logger.info("Initializing Pinecone client")
+        return Pinecone(api_key=settings.pinecone_api_key)
+    except Exception as e:
+        raise RuntimeError(f"Failed to initialize Pinecone client: {e}") from e
 
 
+@lru_cache(maxsize=4)
 def ensure_index(
     index_name: str,
     dimension: int = EMBEDDING_DIMENSION,
     metric: str = PINECONE_METRIC,
 ) -> None:
-    if index_name in _ensured_indexes:
-        return
     try:
         pc = get_pinecone_client()
         existing = {idx.name for idx in pc.list_indexes()}
@@ -42,12 +34,11 @@ def ensure_index(
                 name=index_name,
                 dimension=dimension,
                 metric=metric,
-                spec=ServerlessSpec(cloud=_DEFAULT_CLOUD, region=_DEFAULT_REGION),
+                spec=ServerlessSpec(cloud=settings.pinecone_cloud, region=settings.pinecone_region),
             )
             logger.info(f"Created Pinecone index: {index_name}")
         else:
             logger.info(f"Pinecone index '{index_name}' confirmed active")
-        _ensured_indexes.add(index_name)
     except Exception as e:
         logger.error(f"Failed to ensure index '{index_name}': {e}")
         raise

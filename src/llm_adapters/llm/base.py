@@ -1,11 +1,10 @@
-from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models.chat_models import BaseChatModel
 
+import src.config  # noqa: F401  -- ensures .env is loaded
 from src.common.exceptions import AdapterInitializationError
 from src.common.logging import get_logger
 
-load_dotenv()
 logger = get_logger(__name__)
 
 

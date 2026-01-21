@@ -1,14 +1,13 @@
 from typing import Any
 
-from dotenv import load_dotenv
 from langchain.embeddings import init_embeddings
 from langchain_core.embeddings import Embeddings
 
+import src.config  # noqa: F401  -- ensures .env is loaded
 from src.common.exceptions import AdapterInitializationError
 from src.common.logging import get_logger
 
 logger = get_logger(__name__)
-load_dotenv()
 
 
 def get_embeddings_model(
